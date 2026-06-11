@@ -1,0 +1,45 @@
+# =============================================================================
+# Line ending policy
+#
+# Repo standard: LF in repo; files check out with the right ending per OS.
+# Eliminates the "LF will be replaced by CRLF" warning on Windows git add.
+# =============================================================================
+
+# Auto-detect text vs binary for anything not listed below
+* text=auto
+
+# -- Windows-native scripts: MUST stay CRLF in the working tree --------------
+# (PowerShell / cmd refuse to run scripts with LF endings on some versions)
+*.ps1    text eol=crlf
+*.psm1   text eol=crlf
+*.psd1   text eol=crlf
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+
+# -- Unix-flavored scripts: MUST stay LF ------------------------------------
+*.sh     text eol=lf
+
+# -- Source code / config: LF everywhere (cross-platform safe) --------------
+*.py     text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.json   text eol=lf
+*.toml   text eol=lf
+*.ini    text eol=lf
+*.html   text eol=lf
+*.css    text eol=lf
+*.js     text eol=lf
+
+# -- Binary files: never touch ----------------------------------------------
+*.db     binary
+*.sqlite binary
+*.sqlite3 binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.zip    binary
