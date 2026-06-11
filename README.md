@@ -271,6 +271,71 @@ Get-Content logs\scheduled.log -Tail 80              # 看运行结果
 但用 Windows 任务计划程序更简单：进程崩了不影响下一次，
 还能跨重启自动恢复。
 
+## 邮件推送
+
+定时任务跑完 `--board all` 后，可以把今天新增的文章按板块汇总成一封 HTML 邮件
+发到你邮箱。零依赖（纯 stdlib `smtplib`），SMTP 没配就 silent skip，不影响抓取。
+
+`scripts/run_boards.ps1` 已经默认带 `--email` 跑，所以你只要在 `.env` 里把
+SMTP 4 个必填字段填好，第二天 7:30 就能收到早报；想关掉就把 `SMTP_HOST`
+留空。
+
+### Provider 配置速查
+
+| Provider | `SMTP_HOST` | `SMTP_PORT` | `SMTP_USE_TLS` | `SMTP_PASS` 填什么 |
+|---|---|---|---|---|
+| QQ 邮箱 | `smtp.qq.com` | `465` | `false` | 授权码（不是登录密码） |
+| 163 邮箱 | `smtp.163.com` | `465` | `false` | 客户端授权密码 |
+| Gmail | `smtp.gmail.com` | `587` | `true` | App Password |
+| Outlook / O365 | `smtp.office365.com` | `587` | `true` | 账号密码 |
+
+> **国内强烈推荐 QQ 邮箱**——直连不需要代理，授权码 5 分钟搞定。Gmail
+> 在国内基本要走代理，而 Python 的 `smtplib` **不读** `HTTPS_PROXY` 环境变量，
+> 所以即便你给爬虫配了代理，发 Gmail 还是会超时。
+
+### 推荐：QQ 邮箱（一分钟开通）
+
+1. 浏览器登录 <https://mail.qq.com>
+2. 顶部 **设置 → 账户**
+3. 滚到 **POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV 服务** 那一段
+4. 点 **生成授权码**（会让你发条短信验证）
+5. 复制那串 16 位授权码，填到 `.env` 里 `SMTP_PASS`
+
+完整 `.env` 配置：
+
+```dotenv
+SMTP_HOST="smtp.qq.com"
+SMTP_PORT="465"
+SMTP_USER="你的QQ号@qq.com"
+SMTP_PASS="刚才生成的16位授权码"
+SMTP_FROM=""               # 留空 = 用 SMTP_USER
+SMTP_TO="自己@qq.com"      # 多个收件人用逗号分隔
+SMTP_USE_TLS="false"       # 465 端口必须填 false (走 SSL 而不是 STARTTLS)
+```
+
+### 测试 SMTP 通不通
+
+```powershell
+python run.py --test-email
+```
+
+发送成功打印 `OK: test email sent to ...`；失败立刻退出非零并打印
+`ERROR: ...` 原因（鉴权失败、连不上、TLS 不匹配等），方便定位。
+
+### 看真正的早报长啥样
+
+```powershell
+python run.py --board all --email
+```
+
+会跑完所有板，再把今天新增文章打包发邮件。同样的命令计划任务每天 7:30
+自动跑一次。
+
+### 关掉邮件
+
+把 `SMTP_HOST` 清空就行（其它字段不用动），`run.py --email` 会打印
+`[email] SMTP not configured ... Skipping send.` 后正常退出 0。
+
 ## 测试
 
 **离线单元测试**（不联网，用 `httpx.MockTransport` 喂假数据，验证解析/重试/配置逻辑）：

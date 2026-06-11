@@ -19,6 +19,13 @@
 .EXAMPLE
     .\scripts\run_boards.ps1 -Board my-portfolio
     Run only one specific board
+
+.NOTES
+    Always passes --email to run.py. The flag is a no-op (silent skip) when
+    SMTP_HOST/USER/PASS/TO aren't all set in .env, so leaving the SMTP vars
+    blank disables the daily email without breaking the scheduled task.
+    Configure SMTP in .env (see .env.example) and run
+    ``python run.py --test-email`` to verify before relying on the daily send.
 #>
 param(
     [string]$Board = "all"
@@ -50,7 +57,7 @@ Add-Content -Path $LogFile -Value "=============================================
 Add-Content -Path $LogFile -Value "=== [$Start] starting board run (--board $Board) ==="
 Add-Content -Path $LogFile -Value "=========================================================="
 
-& $VenvPython run.py --board $Board 2>&1 | Tee-Object -FilePath $LogFile -Append
+& $VenvPython run.py --board $Board --email 2>&1 | Tee-Object -FilePath $LogFile -Append
 $ExitCode = $LASTEXITCODE
 
 $End = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import sys
 from pathlib import Path
 
 # Load .env FIRST, before importing any app module that reads os.environ
@@ -70,7 +72,44 @@ def main() -> None:
         "endpoint and print the full request/response. Use this to debug "
         "key/network/model-name issues.",
     )
+    parser.add_argument(
+        "--email",
+        action="store_true",
+        help="After --board completes, build a digest of the last 24h of new "
+        "articles and email it (config in .env: SMTP_HOST/USER/PASS/TO). "
+        "Silently skipped if SMTP isn't configured — does NOT fail the board "
+        "run. Designed for the daily scheduled task.",
+    )
+    parser.add_argument(
+        "--test-email",
+        action="store_true",
+        help="Send a minimal test email to verify SMTP setup and exit. "
+        "Exits non-zero if SMTP is misconfigured or send fails (so users "
+        "can debug independently of any board run).",
+    )
     args = parser.parse_args()
+
+    if args.test_email:
+        from app.mailer import is_configured, send_mail
+
+        if not is_configured():
+            print(
+                "ERROR: SMTP not configured. Required env vars: "
+                "SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_TO",
+                flush=True,
+            )
+            sys.exit(1)
+        try:
+            send_mail(
+                subject="TrendRadarCN · 测试邮件",
+                html="<p>This is a test email from TrendRadarCN. SMTP setup is working.</p>",
+                text="This is a test email from TrendRadarCN. SMTP setup is working.",
+            )
+            print(f"OK: test email sent to {os.getenv('SMTP_TO')}", flush=True)
+        except Exception as e:  # noqa: BLE001 - report any send failure
+            print(f"ERROR: send failed - {type(e).__name__}: {e}", flush=True)
+            sys.exit(1)
+        return
 
     if args.test_llm:
         import json as _json
@@ -251,6 +290,36 @@ def main() -> None:
             for e in r.get("errors") or []:
                 print(f"  ! {e}", flush=True)
         print("\n完成。", flush=True)
+
+        if args.email:
+            from app.mailer import is_configured, send_mail
+
+            if not is_configured():
+                print(
+                    "[email] SMTP not configured "
+                    "(set SMTP_HOST/USER/PASS/TO in .env to enable). Skipping send.",
+                    flush=True,
+                )
+            else:
+                from app.digest import build_digest
+
+                print(
+                    f"[email] sending digest to {os.getenv('SMTP_TO')} ...",
+                    flush=True,
+                )
+                try:
+                    digest = build_digest(hours=24)
+                    send_mail(digest["subject"], digest["html"], digest["text"])
+                    print(
+                        f"[email] sent: {digest['total_articles']} articles "
+                        f"across {len(digest['board_counts'])} boards",
+                        flush=True,
+                    )
+                except Exception as e:  # noqa: BLE001 - never fail the board run
+                    print(
+                        f"[email] WARN: send failed - {type(e).__name__}: {e}",
+                        flush=True,
+                    )
         return
 
     import uvicorn
