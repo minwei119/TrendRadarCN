@@ -1,0 +1,47 @@
+# RSSHub: 一键给国内站点生成稳定 RSS。
+#
+# 启动:
+#   docker compose -f docker-compose.rsshub.yml up -d
+# 停止:
+#   docker compose -f docker-compose.rsshub.yml down
+# 升级:
+#   docker compose -f docker-compose.rsshub.yml pull && \
+#     docker compose -f docker-compose.rsshub.yml up -d
+#
+# 启动后访问 http://localhost:1200/ 查看支持的路由。
+# 几条常用的中文 AI 媒体路由（直接在浏览器里访问能看到 XML 就说明 OK）：
+#   http://localhost:1200/jqzx                # 机器之心
+#   http://localhost:1200/qbitai              # 量子位
+#   http://localhost:1200/zhidx               # 智东西
+#   http://localhost:1200/aiera               # 新智元
+#   http://localhost:1200/36kr/news/ai        # 36氪 AI 频道
+#   http://localhost:1200/geekpark            # 极客公园
+#
+# 然后把 app/boards/boards.yaml 里 ai-cn 板块中
+# "自建 RSSHub 后启用" 那几行的注释去掉即可。
+
+services:
+  rsshub:
+    image: diygod/rsshub:latest
+    container_name: trendradar-rsshub
+    restart: unless-stopped
+    ports:
+      - "1200:1200"
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: redis
+      REDIS_URL: redis://redis:6379/
+      # 部分路由需要登录态，按需添加 (示例):
+      # WEIBO_COOKIES: "..."
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    container_name: trendradar-rsshub-redis
+    restart: unless-stopped
+    volumes:
+      - rsshub-redis:/data
+
+volumes:
+  rsshub-redis:

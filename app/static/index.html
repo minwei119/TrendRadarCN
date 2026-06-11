@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TrendRadarCN · 中文互联网热点雷达</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .topic-row:hover { background: rgba(255,255,255,0.04); }
+    .scrollbar::-webkit-scrollbar { width: 6px; }
+    .scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+    .pulse-dot { animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+<header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-30">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex items-center gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-amber-400 flex items-center justify-center text-xl font-bold text-slate-900">热</div>
+      <div>
+        <h1 class="text-xl font-semibold text-white">TrendRadarCN</h1>
+        <p class="text-xs text-slate-400">中文互联网热点雷达</p>
+      </div>
+    </div>
+    <div class="flex-1"></div>
+    <div class="hidden md:flex items-center gap-3 text-xs text-slate-400">
+      <span id="last-update">尚未抓取</span>
+    </div>
+    <button id="btn-refresh" class="px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 text-sm">刷新数据</button>
+    <button id="btn-crawl" class="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-400 text-slate-900 font-medium text-sm">
+      <span id="btn-crawl-label">立即抓取</span>
+    </button>
+  </div>
+  <div class="max-w-7xl mx-auto px-6 flex gap-1 -mt-1">
+    <button id="tab-btn-hot" class="px-4 py-2 text-sm border-b-2 border-rose-400 text-white font-medium">热点榜单</button>
+    <button id="tab-btn-boards" class="px-4 py-2 text-sm border-b-2 border-transparent text-slate-400 hover:text-slate-200">主题板块</button>
+  </div>
+</header>
+
+<main id="tab-hot" class="max-w-7xl mx-auto px-6 py-6 space-y-8">
+
+  <!-- Aggregated cross-source trending -->
+  <section>
+    <div class="flex items-end justify-between mb-3">
+      <div>
+        <h2 class="text-lg font-semibold text-white">综合热度榜</h2>
+        <p class="text-xs text-slate-400">基于过去 24 小时全平台数据加权聚合，跨平台出现的话题排名越靠前</p>
+      </div>
+      <div class="flex gap-2">
+        <select id="aggregate-hours" class="bg-slate-900 border border-slate-700 text-sm rounded-lg px-2 py-1">
+          <option value="6">近 6 小时</option>
+          <option value="12">近 12 小时</option>
+          <option value="24" selected>近 24 小时</option>
+          <option value="72">近 3 天</option>
+          <option value="168">近 7 天</option>
+        </select>
+      </div>
+    </div>
+    <div id="aggregate-list" class="rounded-xl border border-slate-800 bg-slate-900/40 divide-y divide-slate-800">
+      <div class="p-6 text-center text-sm text-slate-500">点击右上角 “立即抓取” 拉取首批数据</div>
+    </div>
+  </section>
+
+  <!-- Per-source cards -->
+  <section>
+    <div class="flex items-end justify-between mb-3">
+      <h2 class="text-lg font-semibold text-white">各平台热榜</h2>
+      <div class="text-xs text-slate-500" id="source-status"></div>
+    </div>
+    <div id="source-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"></div>
+  </section>
+
+  <!-- Snapshots history -->
+  <section>
+    <h2 class="text-lg font-semibold text-white mb-3">最近抓取记录</h2>
+    <div class="rounded-xl border border-slate-800 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-900 text-slate-400 uppercase tracking-wider text-xs">
+          <tr>
+            <th class="text-left px-4 py-2">时间</th>
+            <th class="text-left px-4 py-2">来源</th>
+            <th class="text-left px-4 py-2">状态</th>
+            <th class="text-right px-4 py-2">条数</th>
+            <th class="text-right px-4 py-2">耗时</th>
+            <th class="text-left px-4 py-2">错误</th>
+          </tr>
+        </thead>
+        <tbody id="snapshots-tbody" class="divide-y divide-slate-800"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<main id="tab-boards" class="hidden max-w-7xl mx-auto px-6 py-6 space-y-6">
+  <div class="flex items-end justify-between">
+    <div>
+      <h2 class="text-lg font-semibold text-white">主题板块</h2>
+      <p class="text-xs text-slate-400">
+        按主题/行业聚合的每日简报。编辑 <code class="text-slate-300">app/boards/boards.yaml</code> 即可自定义。
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <select id="board-hours" class="bg-slate-900 border border-slate-700 text-sm rounded-lg px-2 py-1">
+        <option value="6">近 6 小时</option>
+        <option value="24" selected>近 24 小时</option>
+        <option value="72">近 3 天</option>
+        <option value="168">近 7 天</option>
+      </select>
+      <button id="btn-run-all-boards" class="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-medium text-sm">
+        <span id="btn-run-all-boards-label">跑所有板块</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="board-tabs" class="flex flex-wrap gap-2 border-b border-slate-800 pb-2"></div>
+
+  <div id="board-meta" class="text-xs text-slate-400 flex items-center gap-3"></div>
+
+  <div id="board-tag-bar" class="flex flex-wrap items-center gap-1.5"></div>
+
+  <div id="board-articles" class="rounded-xl border border-slate-800 bg-slate-900/40 divide-y divide-slate-800">
+    <div class="p-6 text-center text-sm text-slate-500">从上方选择一个板块</div>
+  </div>
+</main>
+
+<!-- Trend modal -->
+<div id="trend-modal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+  <div class="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+    <div class="flex items-start justify-between px-5 py-4 border-b border-slate-800">
+      <div>
+        <h3 id="trend-title" class="text-base font-semibold text-white">话题趋势</h3>
+        <p id="trend-subtitle" class="text-xs text-slate-400 mt-1"></p>
+      </div>
+      <button onclick="closeTrend()" class="text-slate-400 hover:text-white text-xl leading-none">×</button>
+    </div>
+    <div class="p-5 overflow-auto scrollbar">
+      <div class="h-64"><canvas id="trend-chart"></canvas></div>
+      <div id="trend-empty" class="hidden text-center text-slate-500 text-sm py-8">该话题暂无足够的历史数据可绘制趋势</div>
+    </div>
+  </div>
+</div>
+
+<footer class="max-w-7xl mx-auto px-6 py-8 text-center text-xs text-slate-600">
+  TrendRadarCN · 本地运行 · 数据保存在 <code class="text-slate-500">trendradar_cn.db</code>
+</footer>
+
+<script>
+const SOURCE_COLORS = {
+  weibo:    { from: "#fb7185", to: "#f43f5e", text: "微博" },
+  zhihu:    { from: "#60a5fa", to: "#2563eb", text: "知乎" },
+  baidu:    { from: "#38bdf8", to: "#0ea5e9", text: "百度" },
+  bilibili: { from: "#f472b6", to: "#ec4899", text: "B站" },
+  toutiao:  { from: "#fbbf24", to: "#f59e0b", text: "头条" },
+  v2ex:     { from: "#a3e635", to: "#84cc16", text: "V2EX" },
+  nodeseek: { from: "#22d3ee", to: "#0891b2", text: "NodeSeek" },
+  juejin:   { from: "#818cf8", to: "#4f46e5", text: "掘金" },
+};
+
+async function api(path, opts={}) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return `${Math.round(diff)} 秒前`;
+  if (diff < 3600) return `${Math.round(diff/60)} 分钟前`;
+  if (diff < 86400) return `${Math.round(diff/3600)} 小时前`;
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function sourceBadge(key) {
+  const c = SOURCE_COLORS[key] || { from: "#94a3b8", to: "#64748b", text: key };
+  return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-slate-900"
+    style="background:linear-gradient(135deg, ${c.from}, ${c.to})">${c.text}</span>`;
+}
+
+async function loadAggregate() {
+  const hours = document.getElementById("aggregate-hours").value;
+  const list = document.getElementById("aggregate-list");
+  list.innerHTML = `<div class="p-6 text-center text-sm text-slate-500">加载中...</div>`;
+  try {
+    const data = await api(`/api/aggregate?hours=${hours}&limit=30`);
+    if (!data.length) {
+      list.innerHTML = `<div class="p-6 text-center text-sm text-slate-500">暂无数据。请先点 “立即抓取”。</div>`;
+      return;
+    }
+    list.innerHTML = data.map((row, i) => {
+      const badges = row.sources.map(sourceBadge).join("");
+      const url = row.url ? `<a href="${escapeHtml(row.url)}" target="_blank" class="hover:text-rose-300">${escapeHtml(row.title)}</a>` : escapeHtml(row.title);
+      return `
+        <div class="topic-row p-3 flex items-center gap-3 cursor-pointer" onclick="showTrend('${escapeHtml(row.title).replace(/'/g, "&#39;")}')">
+          <div class="w-8 text-center text-lg font-bold ${i<3 ? 'text-rose-400' : 'text-slate-500'}">${i+1}</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-slate-100 truncate">${url}</div>
+            <div class="text-[11px] text-slate-500 mt-0.5">出现在 ${row.source_count} 个平台 · 最高排名 #${row.best_rank} · 加权 ${Math.round(row.weighted_score)}</div>
+          </div>
+          <div class="flex gap-1 flex-wrap justify-end max-w-[40%]">${badges}</div>
+        </div>
+      `;
+    }).join("");
+  } catch (e) {
+    list.innerHTML = `<div class="p-6 text-center text-sm text-rose-400">加载失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadSources() {
+  const grid = document.getElementById("source-grid");
+  grid.innerHTML = "";
+  const sources = await api("/api/sources");
+  const hot = await api("/api/hot?limit=20").catch(() => []);
+  const hotMap = Object.fromEntries((hot || []).map(s => [s.source_key, s]));
+
+  let mostRecent = null;
+  for (const s of sources) {
+    if (s.last_fetched_at && (!mostRecent || s.last_fetched_at > mostRecent)) {
+      mostRecent = s.last_fetched_at;
+    }
+  }
+  document.getElementById("last-update").textContent = mostRecent
+    ? `最近更新：${fmtTime(mostRecent)}`
+    : "尚未抓取";
+
+  for (const s of sources) {
+    const data = hotMap[s.key];
+    const color = SOURCE_COLORS[s.key] || { from: "#94a3b8", to: "#64748b" };
+    const card = document.createElement("div");
+    card.className = "rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden flex flex-col";
+    const topics = (data?.topics || []).slice(0, 15);
+    card.innerHTML = `
+      <div class="px-4 py-3 flex items-center gap-3 border-b border-slate-800" style="background:linear-gradient(135deg, ${color.from}22, ${color.to}11)">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold text-slate-900" style="background:linear-gradient(135deg, ${color.from}, ${color.to})">${(color.text || s.key)[0]}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-white text-sm truncate">${escapeHtml(s.display_name)}</div>
+          <div class="text-[11px] text-slate-400">${s.last_fetched_at ? fmtTime(s.last_fetched_at) : "暂无数据"}</div>
+        </div>
+        <button onclick="crawlOne('${s.key}', this)" class="text-[11px] px-2 py-1 rounded-md border border-slate-700 hover:border-slate-500">抓取</button>
+      </div>
+      <div class="divide-y divide-slate-800 max-h-96 overflow-auto scrollbar">
+        ${topics.length === 0
+          ? `<div class="p-6 text-center text-xs text-slate-500">暂无数据</div>`
+          : topics.map((t, i) => `
+              <div class="topic-row px-3 py-2 flex items-start gap-3 cursor-pointer" onclick="showTrend('${escapeHtml(t.title).replace(/'/g, "&#39;")}', '${s.key}')">
+                <div class="w-6 text-center text-xs ${i<3?'text-rose-400 font-bold':'text-slate-500'}">${i+1}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm text-slate-100 line-clamp-2">${t.url ? `<a href="${escapeHtml(t.url)}" target="_blank" onclick="event.stopPropagation()" class="hover:text-rose-300">${escapeHtml(t.title)}</a>` : escapeHtml(t.title)}</div>
+                  ${t.score ? `<div class="text-[10px] text-slate-500 mt-0.5">热度 ${Math.round(t.score).toLocaleString()}</div>` : ""}
+                </div>
+              </div>
+            `).join("")
+        }
+      </div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+async function loadSnapshots() {
+  const tbody = document.getElementById("snapshots-tbody");
+  try {
+    const rows = await api("/api/snapshots?limit=30");
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500 text-xs">暂无抓取记录</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr class="hover:bg-slate-900/60">
+        <td class="px-4 py-2 text-slate-300">${fmtTime(r.fetched_at)}</td>
+        <td class="px-4 py-2">${sourceBadge(r.source_key)}</td>
+        <td class="px-4 py-2">
+          ${r.status === 'ok'
+            ? '<span class="text-emerald-400">✓ ok</span>'
+            : '<span class="text-rose-400">✕ error</span>'}
+        </td>
+        <td class="px-4 py-2 text-right text-slate-300">${r.item_count}</td>
+        <td class="px-4 py-2 text-right text-slate-400">${r.duration_ms} ms</td>
+        <td class="px-4 py-2 text-rose-300 text-xs truncate max-w-md">${r.error ? escapeHtml(r.error) : ""}</td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-rose-400 text-xs">加载失败：${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+let trendChart = null;
+async function showTrend(title, source=null) {
+  document.getElementById("trend-modal").classList.remove("hidden");
+  document.getElementById("trend-title").textContent = title;
+  document.getElementById("trend-subtitle").textContent = source ? `来源：${source}` : "全平台聚合";
+  document.getElementById("trend-empty").classList.add("hidden");
+  if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+  const qs = new URLSearchParams({ title, hours: 168 });
+  if (source) qs.set("source", source);
+  let points = [];
+  try { points = await api(`/api/trend?${qs}`); } catch {}
+
+  if (!points.length) {
+    document.getElementById("trend-empty").classList.remove("hidden");
+    return;
+  }
+
+  const bySrc = {};
+  for (const p of points) {
+    bySrc[p.source_key] ||= [];
+    bySrc[p.source_key].push({ x: new Date(p.fetched_at).getTime(), y: p.rank });
+  }
+  const datasets = Object.entries(bySrc).map(([k, pts]) => {
+    const c = SOURCE_COLORS[k] || { from: "#94a3b8", to: "#64748b", text: k };
+    return {
+      label: c.text || k,
+      data: pts,
+      borderColor: c.from,
+      backgroundColor: c.from,
+      tension: 0.25,
+      pointRadius: 3,
+    };
+  });
+
+  const ctx = document.getElementById("trend-chart").getContext("2d");
+  trendChart = new Chart(ctx, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { type: "linear",
+             ticks: { color: "#94a3b8", callback: v => new Date(v).toLocaleString("zh-CN", { hour12: false, month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" }) },
+             grid: { color: "rgba(148,163,184,0.1)" } },
+        y: { reverse: true, ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,0.1)" }, title: { display: true, text: "排名", color: "#94a3b8" } }
+      },
+      plugins: {
+        legend: { labels: { color: "#cbd5e1" } },
+        tooltip: { callbacks: { title: items => new Date(items[0].parsed.x).toLocaleString("zh-CN", { hour12: false }) } }
+      }
+    }
+  });
+}
+function closeTrend() { document.getElementById("trend-modal").classList.add("hidden"); }
+
+async function crawlOne(key, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "抓取中…"; }
+  try {
+    await api(`/api/crawl?source=${key}`, { method: "POST" });
+    await refreshAll();
+  } catch (e) {
+    alert("抓取失败: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "抓取"; }
+  }
+}
+
+async function crawlAll() {
+  const btn = document.getElementById("btn-crawl");
+  const label = document.getElementById("btn-crawl-label");
+  btn.disabled = true;
+  label.innerHTML = `<span class="pulse-dot">●</span> 正在抓取所有平台…`;
+  try {
+    const result = await api("/api/crawl", { method: "POST" });
+    const ok = result.filter(r => r.status === "ok").length;
+    const fail = result.length - ok;
+    label.textContent = `完成（成功 ${ok} · 失败 ${fail}）`;
+    await refreshAll();
+    setTimeout(() => { label.textContent = "立即抓取"; btn.disabled = false; }, 2500);
+  } catch (e) {
+    label.textContent = "抓取失败";
+    setTimeout(() => { label.textContent = "立即抓取"; btn.disabled = false; }, 2500);
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadAggregate(), loadSources(), loadSnapshots()]);
+}
+
+document.getElementById("btn-refresh").addEventListener("click", refreshAll);
+document.getElementById("btn-crawl").addEventListener("click", crawlAll);
+document.getElementById("aggregate-hours").addEventListener("change", loadAggregate);
+
+// ---------- Tabs ----------
+function showTab(name) {
+  const hot = document.getElementById("tab-hot");
+  const boards = document.getElementById("tab-boards");
+  const btnHot = document.getElementById("tab-btn-hot");
+  const btnBoards = document.getElementById("tab-btn-boards");
+  const active = "border-rose-400 text-white font-medium";
+  const inactive = "border-transparent text-slate-400";
+  if (name === "hot") {
+    hot.classList.remove("hidden");
+    boards.classList.add("hidden");
+    btnHot.className = "px-4 py-2 text-sm border-b-2 " + active;
+    btnBoards.className = "px-4 py-2 text-sm border-b-2 " + inactive + " hover:text-slate-200";
+  } else {
+    hot.classList.add("hidden");
+    boards.classList.remove("hidden");
+    btnHot.className = "px-4 py-2 text-sm border-b-2 " + inactive + " hover:text-slate-200";
+    btnBoards.className = "px-4 py-2 text-sm border-b-2 " + active;
+    loadBoards();
+  }
+}
+document.getElementById("tab-btn-hot").addEventListener("click", () => showTab("hot"));
+document.getElementById("tab-btn-boards").addEventListener("click", () => showTab("boards"));
+
+// ---------- Boards ----------
+let activeBoardKey = null;
+let cachedBoards = [];
+
+async function loadBoards() {
+  const tabs = document.getElementById("board-tabs");
+  try {
+    cachedBoards = await api("/api/boards");
+  } catch (e) {
+    tabs.innerHTML = `<div class="text-sm text-rose-400">加载失败：${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (!cachedBoards.length) {
+    tabs.innerHTML = `<div class="text-sm text-slate-500">尚未配置任何主题板。编辑 <code>app/boards/boards.yaml</code>。</div>`;
+    document.getElementById("board-articles").innerHTML = "";
+    document.getElementById("board-meta").innerHTML = "";
+    return;
+  }
+  if (!activeBoardKey || !cachedBoards.find(b => b.key === activeBoardKey)) {
+    activeBoardKey = cachedBoards[0].key;
+  }
+  tabs.innerHTML = cachedBoards.map(b => {
+    const isActive = b.key === activeBoardKey;
+    return `<button data-key="${b.key}" class="board-tab px-3 py-1.5 rounded-lg text-sm ${isActive ? 'bg-emerald-500 text-slate-900 font-medium' : 'border border-slate-700 hover:border-slate-500 text-slate-200'}">
+      ${escapeHtml(b.name)}
+      <span class="text-[10px] opacity-70">· ${b.total_articles}</span>
+    </button>`;
+  }).join("");
+  tabs.querySelectorAll(".board-tab").forEach(el => {
+    el.addEventListener("click", () => { activeBoardKey = el.dataset.key; activeTag = null; loadBoards(); });
+  });
+  await loadBoardArticles(activeBoardKey);
+}
+
+// Tag color palette (stable per name via hash → palette).
+const TAG_COLORS = [
+  "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+  "bg-sky-500/15 text-sky-300 border-sky-500/30",
+  "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30",
+  "bg-violet-500/15 text-violet-300 border-violet-500/30",
+  "bg-rose-500/15 text-rose-300 border-rose-500/30",
+  "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
+  "bg-lime-500/15 text-lime-300 border-lime-500/30",
+];
+function tagClass(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) | 0; }
+  return TAG_COLORS[Math.abs(h) % TAG_COLORS.length];
+}
+function renderTagChip(t, active = false) {
+  const base = tagClass(t);
+  const ring = active ? " ring-2 ring-offset-1 ring-offset-slate-900 ring-emerald-400" : "";
+  return `<button class="px-2 py-0.5 rounded-full border text-[11px] ${base}${ring}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`;
+}
+
+// Active tag filter — per-board, cleared on board switch.
+let activeTag = null;
+
+async function loadBoardArticles(key) {
+  const hours = document.getElementById("board-hours").value;
+  const list = document.getElementById("board-articles");
+  const meta = document.getElementById("board-meta");
+  const tagBar = document.getElementById("board-tag-bar");
+  const board = cachedBoards.find(b => b.key === key);
+
+  list.innerHTML = `<div class="p-6 text-center text-sm text-slate-500">加载中…</div>`;
+  meta.innerHTML = `
+    <span>${board.feed_count} 个数据源</span>
+    <span>·</span>
+    <span>${board.last_run_at ? '最近运行: ' + fmtTime(board.last_run_at) : '尚未运行'}</span>
+    <span>·</span>
+    <span>累计 ${board.total_articles} 篇</span>
+    <button id="btn-run-this-board" class="ml-auto px-2.5 py-1 rounded-md border border-slate-700 hover:border-slate-500 text-xs">
+      抓取本板块
+    </button>
+  `;
+  document.getElementById("btn-run-this-board").addEventListener("click", () => runBoard(key));
+
+  // Tag filter bar (clickable; click again to clear).
+  if (board.tags && board.tags.length) {
+    const all = `<button class="px-2 py-0.5 rounded-full border text-[11px] ${activeTag === null ? "bg-slate-700 text-slate-100 border-slate-500" : "border-slate-700 text-slate-400 hover:text-slate-200"}" data-tag="">全部</button>`;
+    tagBar.innerHTML = all + board.tags.map(t => renderTagChip(t, t === activeTag)).join(" ");
+    tagBar.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const t = btn.dataset.tag;
+        activeTag = (t && t !== activeTag) ? t : null;
+        loadBoardArticles(key);
+      });
+    });
+  } else {
+    tagBar.innerHTML = "";
+  }
+
+  let items = [];
+  const qs = `hours=${hours}&limit=80${activeTag ? `&tag=${encodeURIComponent(activeTag)}` : ""}`;
+  try { items = await api(`/api/boards/${encodeURIComponent(key)}/articles?${qs}`); }
+  catch (e) { list.innerHTML = `<div class="p-6 text-center text-rose-400 text-sm">加载失败：${escapeHtml(e.message)}</div>`; return; }
+
+  if (!items.length) {
+    const hint = activeTag
+      ? `没有命中标签 “${escapeHtml(activeTag)}” 的文章。`
+      : `这个时间窗口内还没有文章。点 “抓取本板块” 或 “跑所有板块”。`;
+    list.innerHTML = `<div class="p-6 text-center text-sm text-slate-500">${hint}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(it => {
+    const link = it.url
+      ? `<a href="${escapeHtml(it.url)}" target="_blank" class="hover:text-emerald-300">${escapeHtml(it.title)}</a>`
+      : escapeHtml(it.title);
+    const when = it.published_at || it.fetched_at;
+    const tagChips = (it.tags || []).map(t => renderTagChip(t, t === activeTag)).join(" ");
+    const dupBadge = it.cluster_count > 1
+      ? `<span class="px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-medium" title="同一事件被这些源同时报道: ${escapeHtml((it.cluster_sources || []).join(' / '))}">📰 ${it.cluster_count} 源</span>`
+      : "";
+    return `
+      <div class="p-3 hover:bg-slate-800/40">
+        <div class="flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-slate-100 flex items-start gap-2">
+              <span class="flex-1">${link}</span>
+              ${dupBadge}
+            </div>
+            ${it.summary ? `<div class="text-xs text-slate-400 mt-1 line-clamp-2">${escapeHtml(it.summary)}</div>` : ""}
+            <div class="text-[11px] text-slate-500 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>${escapeHtml(it.source)}</span>
+              <span>${fmtTime(when)}</span>
+              ${tagChips ? `<span class="flex flex-wrap gap-1">${tagChips}</span>` : ""}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Tag chips inside article rows are also clickable.
+  list.querySelectorAll("button[data-tag]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const t = btn.dataset.tag;
+      activeTag = (t && t !== activeTag) ? t : null;
+      loadBoardArticles(key);
+    });
+  });
+}
+
+async function runBoard(key) {
+  const meta = document.getElementById("board-meta");
+  meta.innerHTML = `<span class="pulse-dot text-emerald-400">●</span> <span>正在抓取 ${escapeHtml(key)}…</span>`;
+  try {
+    await api(`/api/boards/${encodeURIComponent(key)}/run`, { method: "POST" });
+    await loadBoards();
+  } catch (e) {
+    meta.innerHTML = `<span class="text-rose-400">抓取失败：${escapeHtml(e.message)}</span>`;
+  }
+}
+
+document.getElementById("board-hours").addEventListener("change", () => {
+  if (activeBoardKey) loadBoardArticles(activeBoardKey);
+});
+document.getElementById("btn-run-all-boards").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-run-all-boards");
+  const label = document.getElementById("btn-run-all-boards-label");
+  btn.disabled = true;
+  label.innerHTML = `<span class="pulse-dot">●</span> 抓取中…`;
+  try {
+    const results = await api("/api/boards/run", { method: "POST" });
+    const ok = results.filter(r => r.status === "ok").length;
+    label.textContent = `完成（${ok}/${results.length}）`;
+    await loadBoards();
+    setTimeout(() => { label.textContent = "跑所有板块"; btn.disabled = false; }, 2500);
+  } catch (e) {
+    label.textContent = "失败";
+    setTimeout(() => { label.textContent = "跑所有板块"; btn.disabled = false; }, 2500);
+  }
+});
+
+refreshAll();
+setInterval(() => { loadSnapshots(); }, 30_000);
+</script>
+</body>
+</html>

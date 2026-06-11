@@ -1,0 +1,569 @@
+# Topic boards configuration.
+#
+# Each board pulls from one or more feeds, then keeps only articles whose
+# title+summary matches the include/exclude filters (case-insensitive).
+#
+# Feed types:
+#   - rss          : any RSS 2.0 or Atom URL (works for SEC EDGAR too)
+#   - google_news  : Google News RSS search (set query, lang, country)
+#   - crawler      : reuse the latest snapshot of an existing crawler
+#                    (no network call; just filter what we already pulled)
+#   - json_api     : any JSON HTTP endpoint
+#                    (set url + list_path + fields, see WallStreetCN below)
+#
+# Extra knobs for any HTTP feed:
+#   headers     : dict of HTTP headers (Cookie / Referer / User-Agent ...)
+#   warmup_url  : json_api only — GET this first in the same client to seed
+#                 cookies (needed for Xueqiu, Zhihu, ...)
+#
+# Edit this file and the changes take effect on the next board run -- no
+# server restart needed.
+
+# ---------------------------------------------------------------------------
+# 1. 股市要闻 —— A 股 / 港股 / 美股宏观 + 政策快讯
+#    主力: 华尔街见闻多频道 (国内直连) + 微博/头条 复用
+#    备份: Google News (走代理时启用)
+# ---------------------------------------------------------------------------
+- key: stocks-cn
+  name: 股市要闻
+  description: A 股 / 港股 / 美股宏观 + 央行 + 政策快讯 + 华尔街见闻 7x24。
+  feeds:
+    # -- 华尔街见闻 (国内直连，无需代理) ------------------------------------
+    - type: json_api
+      label: 华尔街见闻 · 全球快讯
+      url: https://api-one.wallstcn.com/apiv1/content/lives?channel=global-channel&client=pc&limit=30
+      list_path: data.items
+      fields:
+        title: title
+        url: uri
+        summary: content_text
+        published_at: display_time  # unix seconds
+      url_template: "https://wallstreetcn.com/livenews/{id}"
+    - type: json_api
+      label: 华尔街见闻 · A股快讯
+      url: https://api-one.wallstcn.com/apiv1/content/lives?channel=a-stock-channel&client=pc&limit=20
+      list_path: data.items
+      fields:
+        title: title
+        url: uri
+        summary: content_text
+        published_at: display_time
+      url_template: "https://wallstreetcn.com/livenews/{id}"
+    # -- 东方财富 7×24 快讯 (公开 JSONP，国内直连) ---------------------------
+    - type: json_api
+      label: 东方财富 · 7×24
+      url: https://newsapi.eastmoney.com/kuaixun/v2/api/list?nid=&pagesize=30&_=1700000000000
+      list_path: LivesList
+      fields:
+        title: digest
+        url: url_unique
+        summary: digest
+        published_at: showtime   # "YYYY-MM-DD HH:MM:SS" 字符串
+    # -- 新浪财经 roll API (国内直连) ----------------------------------------
+    - type: json_api
+      label: 新浪财经 · 财经要闻
+      url: https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=30
+      list_path: result.data
+      fields:
+        title: title
+        url: url
+        summary: intro
+        published_at: ctime  # 字符串 "1715000000"
+    # -- 复用已有抓取 -------------------------------------------------------
+    - type: crawler
+      label: 微博热搜
+      source: weibo
+    - type: crawler
+      label: 头条要闻
+      source: toutiao
+    # -- 备份 (走代理时启用) -------------------------------------------------
+    - type: google_news
+      label: GNews · A股政策
+      query: A股 OR 上证 OR 央行 OR 证监会 OR 美联储
+      lang: zh-CN
+      country: CN
+    - type: google_news
+      label: GNews · 美股港股
+      query: 美股 OR 港股 OR 恒生 OR 纳斯达克 OR 道琼斯
+      lang: zh-CN
+      country: CN
+  include:
+    - 股
+    - 央行
+    - 美联储
+    - 加息
+    - 降息
+    - 上证
+    - 恒生
+    - 纳斯达克
+    - 美元
+    - 港元
+    - 财报
+    - 经济
+    - 通胀
+    - GDP
+    - 证监会
+    - IPO
+    - 美股
+    - A股
+    - 港股
+  exclude:
+    - 广告
+    - 招聘
+  # 自动标签 —— 命中关键词就加该标签 (一篇文章可有多个标签)
+  tags:
+    A股:    [A股, 上证, 深证, 创业板, 科创板, 沪市, 深市, 沪深, 上交所, 深交所]
+    港股:   [港股, 恒生, 南向, 港元, "00700", "0700", "09988", "9988", 港交所]
+    美股:   [美股, 纳斯达克, 道琼斯, 标普, "S&P", 美元, 美债, NYSE]
+    宏观:   [央行, 美联储, 加息, 降息, 通胀, GDP, PMI, CPI, PPI, 财政部, 国常会]
+    财报:   [财报, 业绩, 营收, 净利, EPS, 季报, 年报, 中报, 盈利, 利润, 分红, 派息, 回购]
+    监管:   [证监会, 银保监, 国资委, IPO, 退市, 处罚, 立案, 调查]
+    汇率:   [汇率, 人民币, 离岸, 在岸, USD, CNY, CNH]
+    能源:   [原油, 黄金, 白银, 大宗, 期货, 镍, 锂, 铜]
+  max_items: 80
+
+# ---------------------------------------------------------------------------
+# 2. 我的持仓 —— 跟踪具体指数 / 个股
+#
+#    当前覆盖:
+#      指数: 恒生指数, 恒生科技指数, 上证指数, 科创50, 沪深300, 纳斯达克
+#      个股: 腾讯 (0700.HK), 阿里巴巴 (9988.HK), 中国移动 (0941.HK)
+#
+#    架构: 数据靠 4 个"宽口径"频道拉广义市场新闻
+#          (华尔街见闻 A股 + 港股 + 美股快讯, 各 20-30 条) →
+#          再用下方 include 关键词把"和我持仓相关"的条目筛出来。
+#
+#    >>>>>>>>>>  要加新标的, 改两个地方就行  <<<<<<<<<<
+#
+#    [必做] 在下方 include 里加这个标的的关键词 (中文名 / 英文名 / 代码)
+#           示例 加美团 (3690.HK):
+#             - 美团
+#             - Meituan
+#             - "03690"
+#             - "3690"
+#
+#    [可选] 如果是美股 ADR, 想拿 SEC 原始公告:
+#           复制下面 SEC EDGAR feed 一段, 把 CIK 换成新公司的 CIK
+#           (查 CIK: https://www.sec.gov/cgi-bin/browse-edgar
+#                   搜索公司名后, URL 里 CIK=0001xxxxxx 那段)
+#
+#    [可选] 如果想要"专门"跟踪这只个股, 不靠宽口径过滤:
+#           复制下面 GNews · 腾讯控股 一段, 改 label + query 即可
+#           示例: query: 美团 OR Meituan OR 3690.HK
+#
+# ---------------------------------------------------------------------------
+- key: my-portfolio
+  name: 我的持仓
+  description: 指数 (恒指/恒科技/上证/科创50/沪深300/纳指) + 个股 (腾讯/阿里/中国移动)
+  feeds:
+    # -- 华尔街见闻: 3 个大盘频道直连, 一次拿到 A股+港股+美股新闻 ------------
+    - type: json_api
+      label: 华尔街见闻 · A股快讯
+      url: https://api-one.wallstcn.com/apiv1/content/lives?channel=a-stock-channel&client=pc&limit=30
+      list_path: data.items
+      fields:
+        title: title
+        url: uri
+        summary: content_text
+        published_at: display_time
+      url_template: "https://wallstreetcn.com/livenews/{id}"
+    - type: json_api
+      label: 华尔街见闻 · 港股快讯
+      url: https://api-one.wallstcn.com/apiv1/content/lives?channel=hk-stock-channel&client=pc&limit=30
+      list_path: data.items
+      fields:
+        title: title
+        url: uri
+        summary: content_text
+        published_at: display_time
+      url_template: "https://wallstreetcn.com/livenews/{id}"
+    - type: json_api
+      label: 华尔街见闻 · 美股快讯
+      url: https://api-one.wallstcn.com/apiv1/content/lives?channel=us-stock-channel&client=pc&limit=25
+      list_path: data.items
+      fields:
+        title: title
+        url: uri
+        summary: content_text
+        published_at: display_time
+      url_template: "https://wallstreetcn.com/livenews/{id}"
+    # -- SEC EDGAR 公司公告 (sec.gov 在国内直连可达) -------------------------
+    #    SEC 风控要求 User-Agent 标明你是谁 + 邮箱, 否则 403。
+    #    联系邮箱从环境变量 SEC_USER_AGENT 读取 (在 .env 里设置), 这样不用把
+    #    真实邮箱 commit 到仓库。占位默认值能跑但 SEC 可能限流。
+    #    要加新美股 ADR? 复制这段, 改 CIK + label 即可。
+    - type: rss
+      label: SEC EDGAR · 阿里巴巴 BABA
+      url: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001577552&type=&dateb=&owner=include&count=40&output=atom
+      headers:
+        User-Agent: "${SEC_USER_AGENT:TrendRadarCN contact@example.com}"
+        Host: www.sec.gov
+    # 注: 中国移动 (CHL) 已于 2021 年从 NYSE 退市, 不再向 SEC 提交 6-K, 故不放 SEC feed
+    # -- 备份 / 个股增强 (走代理时启用; 也可作为不靠宽频道的"定向"源) -------
+    - type: google_news
+      label: GNews · 腾讯控股
+      query: 腾讯控股 OR Tencent OR 0700.HK OR 700.HK
+      lang: zh-CN
+      country: CN
+    - type: google_news
+      label: GNews · 阿里巴巴
+      query: 阿里巴巴 OR Alibaba OR 9988.HK OR BABA
+      lang: zh-CN
+      country: CN
+    - type: google_news
+      label: GNews · 中国移动
+      query: 中国移动 OR "China Mobile" OR 0941.HK OR 941.HK
+      lang: zh-CN
+      country: CN
+    # -- 可选: 雪球 (需要 cookie, 默认关闭) ----------------------------------
+    #    雪球 API 要求带 session cookie, 我们用 warmup_url 自动从首页拿一个。
+    #    如果还是 400, 浏览器 F12 → Application → Cookies 复制 xq_a_token
+    #    到下面 headers.Cookie 里即可。
+    #
+    # - type: json_api
+    #   label: 雪球 · 腾讯控股 (00700)
+    #   url: https://stock.xueqiu.com/v5/stock/portfolio/stock/timeline.json?symbol=00700&size=20&page=1
+    #   list_path: data.list
+    #   fields:
+    #     title: title
+    #     url: target
+    #     summary: description
+    #     published_at: created_at
+    #   url_template: "https://xueqiu.com{target}"
+    #   warmup_url: https://xueqiu.com/S/00700
+    #   headers:
+    #     Referer: https://xueqiu.com/S/00700
+    #     # Cookie: "xq_a_token=XXX; xqat=XXX; xq_id_token=XXX"  # 兜底
+  include:
+    # ====== 个股 ======
+    # 腾讯控股 0700.HK
+    - 腾讯
+    - Tencent
+    - "00700"   # 数字代码加引号, 避免 YAML 解析成 int
+    - "0700"
+    # 阿里巴巴 9988.HK / BABA
+    - 阿里
+    - Alibaba
+    - BABA
+    - "09988"
+    - "9988"
+    # 中国移动 0941.HK
+    - 中国移动
+    - China Mobile
+    - "00941"
+    - "0941"
+    # ====== 指数 ======
+    - 恒生指数
+    - 恒指
+    - 恒生科技
+    - 恒科技
+    - HSTECH
+    - 上证指数
+    - 上证综指
+    - 上证
+    - 科创50
+    - 科创板50
+    - 沪深300
+    - CSI300
+    - HS300
+    - 纳斯达克
+    - 纳指
+    - NASDAQ
+    - 标普500   # 顺手也加进来, 纳指动向通常和它联动
+    - S&P 500
+    # ====== 通用词 (从大盘频道再过滤) ======
+    - 港股
+    - 恒生
+    - A股
+    - 股价
+    - 财报
+    - 业绩
+    - 公告
+    - 回购
+    - 分红
+    - 减持
+    - 增持
+    - 派息
+    # ====== SEC 公告表单 ======
+    - 8-K
+    - 6-K
+    - 20-F
+  exclude:
+    - 广告
+    - 招聘
+  max_items: 100
+
+# ---------------------------------------------------------------------------
+# 3. AI 前沿 (中文) —— 国内 AI 媒体: 机器之心 / 36氪 / 量子位 / 极客公园 / 智东西 / 新智元
+#
+#    当前主力: 36kr 快讯 (直连 RSS), Google News site: 过滤 (走代理)
+#
+#    最稳的方式: 自建 RSSHub (Docker 一行命令)，然后启用下面注释掉的 feeds：
+#      docker compose -f docker-compose.rsshub.yml up -d
+#      默认监听 http://localhost:1200
+# ---------------------------------------------------------------------------
+- key: ai-cn
+  name: AI 前沿 (中文)
+  description: 国内 AI 媒体 (机器之心 / 36氪 / 量子位 / 极客公园 / 智东西 / 新智元) + AI 关键词大盘。
+  # LLM 分类器: 让模型理解内容再打标签, 避免"英伟达股价"被关键词误判为 AI芯片。
+  # 需要环境变量: TRENDRADAR_LLM_API_KEY (或 DEEPSEEK_API_KEY)。
+  # 没配 key 时自动 fallback 到 rule-based。
+  tagger: llm
+  feeds:
+    # -- 国内新闻 直连 ------------------------------------------------------
+    # (英文 arxiv / HF Papers 论文源已搬到 ai-frontier 板, 因为它们都是英文)
+    - type: rss
+      label: 36kr · 快讯
+      url: https://36kr.com/feed-newsflash
+    - type: rss
+      label: IT之家
+      url: https://www.ithome.com/rss/
+    - type: rss
+      label: 虎嗅
+      url: https://www.huxiu.com/rss/0.xml
+    # 极客公园 RSS 经常超时，按需启用
+    # - type: rss
+    #   label: 极客公园
+    #   url: https://www.geekpark.net/rss
+    # -- 自建 RSSHub 后启用 (默认本机 docker，监听 :1200) ---------------------
+    # - type: rss
+    #   label: 机器之心
+    #   url: http://localhost:1200/jqzx
+    # - type: rss
+    #   label: 量子位
+    #   url: http://localhost:1200/qbitai
+    # - type: rss
+    #   label: 智东西
+    #   url: http://localhost:1200/zhidx
+    # - type: rss
+    #   label: 新智元
+    #   url: http://localhost:1200/aiera
+    # - type: rss
+    #   label: 36氪 · AI 频道
+    #   url: http://localhost:1200/36kr/news/ai
+    # -- 备份 (走代理时启用) -------------------------------------------------
+    - type: google_news
+      label: GNews · 国内AI媒体
+      query: >-
+        site:jiqizhixin.com OR site:36kr.com OR site:qbitai.com
+        OR site:geekpark.net OR site:zhidx.com OR site:aiera.com.cn
+      lang: zh-CN
+      country: CN
+    - type: google_news
+      label: GNews · AI关键词
+      query: 大模型 OR AI芯片 OR 智能体 OR 推理模型 OR OpenAI OR Anthropic OR DeepSeek OR 通义千问
+      lang: zh-CN
+      country: CN
+  include:
+    # 中文关键词
+    - AI
+    - 大模型
+    - 智能体
+    - 算力
+    - 算法
+    - 训练
+    - 推理
+    - 模型
+    - 芯片
+    - 通义
+    - 文心
+    - 豆包
+    # 英文关键词 (覆盖 arxiv / HF Daily Papers / 英文媒体)
+    - LLM
+    - GPT
+    - Claude
+    - Gemini
+    - Agent
+    - OpenAI
+    - Anthropic
+    - DeepSeek
+    - language model
+    - transformer
+    - reasoning
+    - fine-tun        # 同时匹配 fine-tune / fine-tuning
+    - pretrain
+    - benchmark
+    - alignment
+    - neural
+    - RLHF
+    - "RL "           # reinforcement learning, 加空格避免误中
+    - dataset
+    - multimodal
+  exclude:
+    - 广告
+    - 招聘
+    - 赞助
+  tags:
+    # 模型本身: 发布 / 开源 / 升级 / benchmark
+    # 主要靠"模型名"命中, 通用词只留"大模型/LLM/多模态/推理模型/上下文" 等专业词
+    大模型:    [大模型, LLM, GPT, Claude, Gemini, Llama, Mistral, Qwen, DeepSeek,
+                通义千问, 文心一言, 豆包, 智谱, GLM, Kimi, MiniMax, Yi-, Moonshot,
+                Sora, Veo, 推理模型, 多模态, 上下文窗口, MoE, 稠密模型]
+    # AI 芯片本身 (型号 / 工艺 / 国产厂商 / 加速器框架)
+    # 严格意义只覆盖"芯片本身"的新闻; 公司动态 (英伟达/AMD 财报、CEO等) 归到 "公司" 标签
+    AI芯片:    [AI芯片, AI 芯片, 推理卡, 训练卡, 算力卡, 加速器, 推理芯片, 训练芯片,
+                H100, H200, H800, A100, A800, B100, B200, B300, GB200, GB300,
+                MI300, MI325, MI350, TPU, NPU, ASIC,
+                寒武纪, 昇腾, 海光, 摩尔线程, 壁仞, 燧原, 平头哥, 沐曦,
+                晶圆, 制程, 流片, 光刻机, EUV, HBM, 算力网络, 算力中心,
+                CUDA, vLLM, TensorRT, ROCm]
+    # 智能体 + 工具调用 + 多步任务
+    Agent:    [智能体, Agent, AutoGPT, MCP, function call, tool use, 多智能体,
+                工作流, AI 工作流, AI 助理, computer use, browser use]
+    # 商业 / 出海 / 营收 — 只保留"商业化"明确的词, 不用 "应用/产品/发布" 这种泛词
+    商业:     [出海, 商业化, 营收, 月活, DAU, MAU, 付费, 定价, 订阅, 客户, ARR,
+                政企, 行业方案, 政府订单, 接入大模型, To B 落地]
+    # 融资 / 投资 / 估值 / 并购
+    融资:     [融资, 估值, 投资, 募资, 投后, A 轮, B 轮, C 轮, D 轮, 种子轮, 天使轮,
+                IPO, 并购, 收购, 上市, 拟收购, 亿美元融资, 亿人民币融资]
+    # 公司 / 关键玩家 (公司本身的动态: 战略 / 财报 / 高管 / 重组 / 股价)
+    公司:     [OpenAI, Anthropic, DeepMind, Microsoft, Meta AI, 谷歌, Google,
+                英伟达, Nvidia, AMD, Apple Intelligence, Mistral,
+                字节, 抖音, 阿里巴巴, 腾讯, 百度, 华为, 小米,
+                月之暗面, 智谱, 零一万物, 百川智能, 商汤, 旷视, 阶跃星辰,
+                MiniMax, 面壁智能, 黄仁勋, Sam Altman, 奥特曼, 马斯克]
+    # 政策 / 监管 / 合规
+    监管:     [监管, 备案, 合规, AI安全, AI 安全, 隐私保护, 著作权, 版权,
+                欧盟AI法案, 出口管制, 制裁, 禁运, 网信办, 评测办法]
+    # 研究 = 方法论 / 技术深度报道 (训练方法 / 对齐 / scaling law / 技术博客)
+    #         论文源已搬到 ai-frontier (它们都是英文), 这里只留中文技术报道
+    研究:     [训练方法, 对齐, alignment, scaling law, RLHF, DPO, SFT,
+                微调技术, 推理技巧, post-training, 蒸馏, 量化, 涌现, RAG,
+                MoE, 上下文学习, Chain of Thought, CoT, in-context learning,
+                emergent, scaling]
+  max_items: 80
+
+# ---------------------------------------------------------------------------
+# 4. AI Frontier (英文) —— 英文 AI / LLM 行业动态
+# ---------------------------------------------------------------------------
+- key: ai-frontier
+  name: AI Frontier (英文)
+  description: Latest AI / LLM / open-source AI developments — English-language sources.
+  tagger: llm
+  feeds:
+    # -- 真·论文源 (从 ai-cn 搬过来, 英文板放英文论文更合适) -----------------
+    # HuggingFace Daily Papers: 社区精选, 每天 5-15 篇被 upvote 的 LLM/AI 论文
+    - type: json_api
+      label: HuggingFace · Daily Papers
+      url: https://huggingface.co/api/daily_papers
+      list_path: ""
+      fields:
+        title: title
+        summary: paper.ai_summary
+        published_at: publishedAt
+      url_template: "https://huggingface.co/papers/{paper[id]}"
+    # arxiv cs.CL: NLP / LLM 最相关; limit=25 控量
+    - type: rss
+      label: arxiv · cs.CL
+      url: https://rss.arxiv.org/rss/cs.CL
+      limit: 25
+    # arxiv cs.LG: 机器学习通用, 覆盖训练 / 优化 / 架构等; limit=25 控量
+    - type: rss
+      label: arxiv · cs.LG
+      url: https://rss.arxiv.org/rss/cs.LG
+      limit: 25
+    # -- 英文新闻 直连 ------------------------------------------------------
+    - type: rss
+      label: TechCrunch · AI
+      url: https://techcrunch.com/category/artificial-intelligence/feed/
+    - type: rss
+      label: MIT Tech Review · AI
+      url: https://www.technologyreview.com/topic/artificial-intelligence/feed
+    # -- 备份 (走代理时启用) -------------------------------------------------
+    - type: google_news
+      label: GNews · AI Industry
+      query: AI OR LLM OR "large language model" OR OpenAI OR Anthropic OR Google DeepMind
+      lang: en-US
+      country: US
+    - type: google_news
+      label: GNews · AI Research
+      query: Claude OR GPT-5 OR Gemini OR Llama OR Mistral OR "open source AI"
+      lang: en-US
+      country: US
+  include:
+    - AI
+    - LLM
+    - GPT
+    - Claude
+    - Gemini
+    - Llama
+    - Mistral
+    - OpenAI
+    - Anthropic
+    - DeepMind
+    # 论文向 (覆盖 arxiv / HF Papers)
+    - model
+    - agent
+    - inference
+    - training
+    - transformer
+    - reasoning
+    - fine-tun        # fine-tune / fine-tuning
+    - pretrain
+    - benchmark
+    - alignment
+    - neural
+    - RLHF
+    - dataset
+    - multimodal
+    - language model
+  exclude:
+    - sponsored
+    - giveaway
+  tags:
+    # 模型本身: 发布 / 开源 / 升级 / benchmark
+    Models:    [GPT, Claude, Gemini, Llama, Mistral, Qwen, DeepSeek, Grok,
+                Phi, Yi-, Sora, Veo, Stable Diffusion, Flux,
+                open-weights, open source, release, launches, unveils,
+                multimodal, reasoning model, context window, MoE, dense model,
+                benchmark, leaderboard, beats, outperforms]
+    # AI 芯片本身 (型号 / 工艺 / 加速器框架). 公司动态归 Company
+    Hardware:  [H100, H200, H800, A100, A800, B100, B200, B300, GB200, GB300,
+                MI300, MI325, MI350, TPU, NPU, ASIC, FPGA,
+                chip, GPU, accelerator, fab, wafer, lithography, EUV, HBM,
+                datacenter, data center, compute cluster,
+                CUDA, vLLM, TensorRT, ROCm]
+    # Agent / 工具调用 / 多步任务
+    Agents:    [agent, autonomous, "tool use", "tool-use", "function call",
+                "function calling", MCP, "computer use", "browser use",
+                multi-agent, workflow, AutoGPT, copilot]
+    # 融资 / 估值 / IPO / M&A
+    Funding:   [funding, fundraise, raise, raised, raises, round,
+                Series A, Series B, Series C, Series D, Series E,
+                seed round, valuation, billion, IPO, acquisition, acquires,
+                acquired, merger, M&A]
+    # 公司层动态: 财报 / 高管 / 战略 / 重组 / 股价
+    Company:   [OpenAI, Anthropic, DeepMind, Microsoft, Meta, Google,
+                Nvidia, AMD, Apple, Apple Intelligence, Mistral, Cohere,
+                xAI, Perplexity, Stability AI, Inflection, Adept,
+                CEO, founder, co-founder, hire, hires, fires, departure,
+                resign, layoffs, restructure, strategy, earnings, revenue beat,
+                Sam Altman, Dario Amodei, Demis Hassabis, Elon Musk, Jensen Huang,
+                Mark Zuckerberg, Sundar Pichai]
+    # 政策 / 监管 / 出口管制 / 合规
+    Policy:    [regulation, regulator, "AI Act", "EU AI Act", "executive order",
+                "export control", export controls, sanction, sanctions, ban,
+                compliance, "FTC ", "DOJ ", "SEC ", "White House",
+                congress, congressional, hearing, antitrust, lawsuit,
+                copyright, NIST, NIH, "Biden ", "Trump ", policy, law,
+                China sanctions, chip ban]
+    # 技术安全 (对齐 / 越狱 / 红队 / 偏见). 政府监管归 Policy
+    Safety:    [safety, alignment, "red team", "red-team", jailbreak,
+                jailbroken, hallucination, hallucinate, bias, harm,
+                misuse, deepfake, misinformation, "model evaluation",
+                "frontier risk", catastrophic, RSP, "responsible scaling"]
+    # Research = 论文 + 研究方法论 (合并后覆盖范围较广)
+    #   - 论文本身: arxiv / HF Daily Papers / "we propose" / abstract
+    #   - 研究方法: 训练 / 对齐 / scaling / RLHF / 蒸馏等技术深度内容
+    Research:  [arxiv, "we propose", "we present", "we introduce",
+                "we show", "we demonstrate", "we release",
+                "novel approach", "novel method", "this paper",
+                abstract, paper, preprint, "new dataset", "new benchmark",
+                training method, fine-tuning, "fine-tune", RLHF, DPO, PPO, SFT,
+                pretraining, post-training, distillation, quantization,
+                "scaling law", emergent, "in-context learning",
+                "chain of thought", "chain-of-thought", CoT, RAG,
+                "mixture of experts", MoE, "world model"]
+  cluster_threshold: 0.6
+  # arxiv + HF + 4 news = ~80-120 篇, 加大 cap
+  max_items: 120
