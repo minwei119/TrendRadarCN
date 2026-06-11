@@ -20,31 +20,78 @@
 
 ## 快速开始
 
-```bash
-cd C:\Users\minwei\TrendRadarCN
+### 推荐：一键部署（新机器/全新克隆）
 
-# 1. 创建虚拟环境 (推荐)
-python -m venv .venv
-.venv\Scripts\activate
-
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 跑起来
-python run.py             # 启动 web 服务: http://127.0.0.1:8001
+```powershell
+git clone https://github.com/minwei119/TrendRadarCN.git
+cd TrendRadarCN
+.\scripts\setup.ps1
 ```
 
-打开浏览器访问 <http://127.0.0.1:8001>，点击右上角 **立即抓取** 触发首次抓取，
-之后页面会显示：
+`setup.ps1` 会自动完成：
+1. 找到合适的 Python (>= 3.11)，找不到给你下载链接
+2. 创建虚拟环境 `.venv`
+3. 安装 `requirements.txt`
+4. 交互式生成 `.env`（按提示填代理 / 知乎 cookie / DeepSeek key / SEC 邮箱，每项都可跳过）
+5. 初始化 SQLite 数据库
+6. 询问是否安装每日 7:30 的计划任务
 
-- **综合热度榜**：跨平台加权聚合，出现在多个平台的话题排名靠前
-- **各平台热榜**：每个平台独立的 top 列表，点击话题可看其历史趋势曲线
-- **最近抓取记录**：每次任务的成功率、耗时、错误
+脚本是**幂等**的，可以反复跑。要从头来过加 `-Force`：
 
-### 命令行一次性抓取（不启动 web）
+```powershell
+.\scripts\setup.ps1 -Force            # 删 .venv + .env 重建
+.\scripts\setup.ps1 -SkipTask         # 不问计划任务
+.\scripts\setup.ps1 -PythonVersion 3.13   # 强制用 3.13
+```
 
-```bash
-python run.py --crawl
+如果 PowerShell 报 `running scripts is disabled`，开头加 `powershell -ExecutionPolicy Bypass -File`。
+
+### 手动安装（不想用一键脚本）
+
+```powershell
+cd TrendRadarCN
+
+py -3.13 -m venv .venv                  # 用 Python 3.13 建 venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+copy .env.example .env                  # 然后手动编辑 .env 填值
+notepad .env
+
+python run.py                           # 启动 web: http://127.0.0.1:8001
+```
+
+### 跑起来后
+
+打开 <http://127.0.0.1:8001>，页面有两个 tab：
+
+- **热点榜**：跨平台聚合 + 各平台独立榜单 + 历史趋势曲线（点话题查看）
+- **主题板块**：4 个独立板（股市要闻 / 我的持仓 / AI 前沿中文 / AI Frontier 英文），
+  支持标签筛选 + 事件聚类（同一事件多源合并显示）
+
+右上角"立即抓取"触发综合榜抓取；主题板需要用 `python run.py --board <key>`
+触发，或装好计划任务后每天自动跑。
+
+### 关于 `.env`
+
+所有秘密 / 私人配置都在项目根目录的 `.env` 里（已 gitignored，不会进仓库）。
+模板见 `.env.example`。涉及的变量：
+
+| 变量 | 用途 | 必需 |
+|---|---|---|
+| `TRENDRADAR_PROXIES` | HTTP 代理（访问 Google News / arxiv / HuggingFace 用） | 否（国内直连源不需要） |
+| `TRENDRADAR_ZHIHU_COOKIE` | 知乎登录 cookie（绕过反爬） | 否（不配 zhihu 源会 401） |
+| `TRENDRADAR_LLM_API_KEY` | DeepSeek key，用于 ai-cn / ai-frontier 自动打标签 | 否（不配会降级到规则匹配） |
+| `SEC_USER_AGENT` | SEC EDGAR 联系人，格式 `Project name@domain.com` | 用 my-portfolio 板时需要 |
+
+### 命令行模式（不启动 web）
+
+```powershell
+python run.py --crawl                   # 抓所有"热点榜"源
+python run.py --board all               # 跑所有 4 个主题板
+python run.py --board my-portfolio      # 只跑某一个主题板
+python run.py --backfill-boards --force # 重新打标签 / 重新聚类所有已存在文章
+python run.py --test-llm                # 测 LLM API 通不通
 ```
 
 ## 代理与重试（环境变量配置，无需改代码）
@@ -160,17 +207,69 @@ app/
 2. 在 `app/crawlers/__init__.py` 的 `_REGISTRY` 里加上这个类的实例。
 3. 重启服务即可。下一次启动会自动把新源插入 `sources` 表。
 
-## 可选：定时抓取
+## 定时抓取（Windows 计划任务）
 
-当前是**手动触发**模式。要做定时抓取，最简单的方式是用 Windows 任务计划程序
-或者 cron 调用：
+仓库带了 3 个 PowerShell 脚本，一行命令把"每天早上 7:30 自动跑全部 4 个板块"装上：
 
-```bash
-python run.py --crawl
+```powershell
+cd C:\Users\minwei\TrendRadarCN
+.\scripts\install_scheduled_task.ps1
 ```
 
-如果想常驻进程内调度，给 `requirements.txt` 加 `apscheduler`，在
+如果 PowerShell 报 `running scripts is disabled`（默认执行策略），改用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_scheduled_task.ps1
+```
+
+### 改时间 / 重新安装
+
+```powershell
+.\scripts\install_scheduled_task.ps1 -Time 08:00     # 改到 8:00
+```
+
+脚本是幂等的：先 unregister 旧任务，再注册新任务，可以反复跑。
+
+### 立刻触发一次（不用等明天 7:30）
+
+```powershell
+Start-ScheduledTask -TaskName TrendRadarCN-DailyBoards
+Get-Content logs\scheduled.log -Tail 80              # 看运行结果
+```
+
+### 卸载
+
+```powershell
+.\scripts\uninstall_scheduled_task.ps1
+```
+
+### 行为说明
+
+| 场景 | 表现 |
+|---|---|
+| 7:30 电脑开着 + 已登录 | 后台无窗口跑（1-3 分钟） |
+| 7:30 电脑开着但未登录 | 不跑，登录后立刻补跑 |
+| 7:30 电脑关机 / 睡眠 | 不跑，下次开机登录后立刻补跑 |
+| 网络中途断了 | 失败 → 10 分钟后重试，最多 2 次 |
+| 跑超过 1 小时 | 强杀（防卡死） |
+
+任务以**你自己的身份**运行，无需 admin，无需保存密码。日志统一写到
+`logs\scheduled.log`，每次运行带时间戳分隔。
+
+### 调试
+
+| 命令 | 用途 |
+|---|---|
+| `Get-ScheduledTaskInfo -TaskName TrendRadarCN-DailyBoards` | 上次运行时间 + 结果 |
+| `Get-Content logs\scheduled.log -Tail 80` | 最近一次输出 |
+| `.\scripts\run_boards.ps1 -Board ai-cn` | 手动只跑一个板（绕过计划任务测试 wrapper） |
+
+### 在进程内调度（不推荐）
+
+如果硬要做进程内调度，给 `requirements.txt` 加 `apscheduler`，在
 `app/main.py` 的 `_startup()` 里启动 `AsyncIOScheduler` 即可。
+但用 Windows 任务计划程序更简单：进程崩了不影响下一次，
+还能跨重启自动恢复。
 
 ## 测试
 
