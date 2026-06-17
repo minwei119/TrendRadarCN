@@ -309,6 +309,9 @@
   # 需要环境变量: TRENDRADAR_LLM_API_KEY (或 DEEPSEEK_API_KEY)。
   # 没配 key 时自动 fallback 到 rule-based。
   tagger: llm
+  # LLM 一句话摘要: 给每条新闻生成 1 句话总结, 放在标题下面更易扫读。
+  # 复用 TRENDRADAR_LLM_API_KEY; 没配 key 时该板的文章不会有 llm_summary。
+  summarizer: llm
   feeds:
     # -- 国内新闻 直连 ------------------------------------------------------
     # (英文 arxiv / HF Papers 论文源已搬到 ai-frontier 板, 因为它们都是英文)
@@ -440,6 +443,8 @@
   name: AI Frontier (英文)
   description: Latest AI / LLM / open-source AI developments — English-language sources.
   tagger: llm
+  # LLM 一句话摘要 (英文文章自动用英文输出)。
+  summarizer: llm
   feeds:
     # -- 真·论文源 (从 ai-cn 搬过来, 英文板放英文论文更合适) -----------------
     # HuggingFace Daily Papers: 社区精选, 每天 5-15 篇被 upvote 的 LLM/AI 论文
@@ -567,3 +572,144 @@
   cluster_threshold: 0.6
   # arxiv + HF + 4 news = ~80-120 篇, 加大 cap
   max_items: 120
+
+# ---------------------------------------------------------------------------
+# 5. 机器人 (具身智能) —— 人形机器人 + VLA 模型 + 行业动态
+#
+#    主力直连源 (无需代理): arxiv cs.RO + IEEE Spectrum Robotics + TechCrunch Robotics
+#    备份 (走代理): Google News 中英文关键词
+#
+#    用 LLM 打标签, 同 ai-cn / ai-frontier
+# ---------------------------------------------------------------------------
+- key: robotics
+  name: 机器人 (具身智能)
+  description: 人形机器人 / 具身大模型 (VLA) / 行业融资 / 学术论文 — 国内外混合源
+  tagger: llm
+  # LLM 一句话摘要: arxiv 论文标题往往很学术, 摘要可读性差, 一句话总结很有帮助。
+  summarizer: llm
+  feeds:
+    # -- 直连源 -------------------------------------------------------------
+    # arxiv cs.RO: 机器人学最权威的论文库, limit=25 控量
+    - type: rss
+      label: arxiv · cs.RO
+      url: https://rss.arxiv.org/rss/cs.RO
+      limit: 25
+    # IEEE Spectrum Robotics: 英文行业权威媒体
+    - type: rss
+      label: IEEE Spectrum · Robotics
+      url: https://spectrum.ieee.org/feeds/topic/robotics.rss
+    # TechCrunch Robotics: 商业新闻 / 融资 / 创业公司
+    - type: rss
+      label: TechCrunch · Robotics
+      url: https://techcrunch.com/category/robotics/feed/
+    # -- 备份 (走代理时启用) -------------------------------------------------
+    - type: google_news
+      label: GNews · 中文机器人
+      query: >-
+        具身智能 OR 人形机器人 OR 机器人 OR 宇树 OR 智元 OR 优必选 OR 银河通用
+        OR 远征 A1 OR Optimus OR 特斯拉机器人 OR 小米机器人
+      lang: zh-CN
+      country: CN
+    - type: google_news
+      label: GNews · 英文机器人
+      query: >-
+        humanoid robot OR "embodied AI" OR "Tesla Optimus" OR "Figure AI"
+        OR "Boston Dynamics" OR "1X Technologies" OR "Agility Robotics"
+        OR "Unitree" OR VLA model
+      lang: en-US
+      country: US
+  include:
+    # 中文关键词
+    - 机器人
+    - 具身智能
+    - 具身
+    - 人形
+    - 仿生
+    - 双足
+    - 四足
+    - 灵巧手
+    - 末端执行器
+    - 操作臂
+    - 移动机器人
+    - 宇树
+    - 智元
+    - 优必选
+    - 银河通用
+    - 星动纪元
+    - 傅利叶
+    - 远征
+    # 英文关键词
+    - robot          # 包括 robotic / robotics
+    - humanoid
+    - embodied
+    - manipulation
+    - dexterous
+    - gripper
+    - locomotion
+    - bipedal
+    - quadruped
+    - Optimus
+    - Figure
+    - "1X "          # 加空格区分代码里的 1x
+    - Tesla bot
+    - Boston Dynamics
+    - Unitree
+    - Agility
+    - Apptronik
+    - VLA           # vision-language-action 模型
+    - "RT-2"
+    - "GR-1"
+    - "RDT"
+    - "OpenVLA"
+    - PaLM-E
+  exclude:
+    - 广告
+    - 招聘
+    - 赞助
+    - sponsored
+    - giveaway
+  tags:
+    # 人形机器人本体 / 整机产品 (硬件 + 型号)
+    人形机器人: [Optimus, "Figure 01", "Figure 02", Atlas, "Neo ", "Neo Gen",
+                "H1", "G1", "B1", 远征 A1, 远征 A2, CyberOne, 行者, 通用机器人,
+                Walker, NAO, Pepper, humanoid, bipedal, "2-legged", 双足,
+                人形, 仿生, 全尺寸]
+    # 具身大模型 / VLA / 多模态机器人模型
+    具身大模型: [VLA, vision-language-action, "RT-2", "RT-1", "RT-X",
+                π0, "GR-1", "GR-2", "RDT", "RDT-1B", "OpenVLA", "Pi-zero",
+                PaLM-E, RoboCat, 具身大模型, 具身智能, embodied, embodiment,
+                "world model", 视觉语言动作, 操作策略]
+    # 公司层动态 (产品发布 / 高管 / 战略 / 财报)
+    公司:      [Tesla, "Figure AI", "1X Technologies", "Boston Dynamics",
+                "Agility Robotics", "Apptronik", Sanctuary, "Physical Intelligence",
+                Skild, Covariant,
+                宇树, 智元, 优必选, 银河通用, 星动纪元, 傅利叶, 达闼,
+                小鹏机器人, 小米机器人, 特斯拉机器人,
+                CEO, founder, hires, departure, 创始人, 首席执行官,
+                Elon Musk, Brett Adcock, "Bernt Børnich"]
+    # 融资 / 估值 / IPO / 并购
+    融资:      [融资, 估值, 投资, A 轮, B 轮, C 轮, D 轮, 种子轮, 天使轮,
+                IPO, 并购, 收购, 上市,
+                funding, fundraise, raise, raised, raises, round,
+                Series A, Series B, Series C, valuation, billion,
+                acquisition, acquires, acquired, M&A]
+    # 落地应用 (具体场景, 不只是"AI" 这种泛词)
+    应用:      [仓储, 物流, 工厂, 制造, 装配, 医疗, 手术, 护理, 养老, 家庭,
+                家政, 服务, 安防, 巡检, 农业, 零售,
+                warehouse, factory, manufacturing, assembly, medical, surgery,
+                healthcare, eldercare, household, retail, logistics, inspection,
+                "use case", deployment]
+    # 学术 / 论文 / 会议 (arxiv / ICRA / CoRL / RSS / IROS / CVPR)
+    学术:      [arxiv, paper, preprint, abstract,
+                "we propose", "we present", "we introduce", "we show",
+                "we release", "novel approach", "this paper",
+                ICRA, "CoRL ", "IROS ", "RSS ", CVPR, NeurIPS,
+                论文, 本论文, 我们提出, 数据集, benchmark, 基准]
+    # 政策 / 标准 / 出口管制
+    政策:      [工信部, 国务院, 发改委, 北京市, 上海市, 深圳市,
+                标准, 备案, 监管, 牌照, 准入,
+                regulation, policy, "executive order", "export control",
+                sanction, ban, NIST, NHTSA, compliance, law]
+  cluster_threshold: 0.6
+  # 5 个源, 直连 + GNews 加起来 60-100 条, 80 够用
+  max_items: 80

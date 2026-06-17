@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 
+from ..config import llm_proxy
 from ..obs import log_request
 
 
@@ -183,7 +184,7 @@ async def _classify_batch(
         "response_format": {"type": "json_object"},
     }
     try:
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, proxy=llm_proxy()) as client:
             resp = await client.post(
                 url,
                 headers={

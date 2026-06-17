@@ -99,6 +99,17 @@ class Article(Base):
     # representative article's own id is reused as the cluster_id of its
     # cluster, so a singleton article has cluster_id == id.
     cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # Like cluster_id but assigned by LLM semantic clustering (see
+    # boards/llm_cluster.py). When set, takes priority over cluster_id for
+    # grouping in both digest and dashboard. The MIN article.id of a group is
+    # reused as the cluster value, so it's stable across reruns.
+    llm_cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # LLM-generated 1-sentence summary, populated when the board has
+    # ``summarizer: llm`` configured. NULL when not yet summarized or when
+    # the board doesn't use the summarizer. We keep ``summary`` (the original
+    # snippet from the feed) untouched and read ``llm_summary or summary``
+    # at render time.
+    llm_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class BoardRun(Base):

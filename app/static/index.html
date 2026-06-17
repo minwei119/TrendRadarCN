@@ -537,7 +537,8 @@ async function loadBoardArticles(key) {
               <span class="flex-1">${link}</span>
               ${dupBadge}
             </div>
-            ${it.summary ? `<div class="text-xs text-slate-400 mt-1 line-clamp-2">${escapeHtml(it.summary)}</div>` : ""}
+            ${it.llm_summary ? `<div class="text-xs text-slate-400 mt-1 line-clamp-2 italic" title="${escapeHtml(it.llm_summary)}">${escapeHtml(it.llm_summary)}</div>` : ""}
+            ${(!it.llm_summary && it.summary) ? `<div class="text-xs text-slate-500 mt-1 line-clamp-2">${escapeHtml(it.summary)}</div>` : ""}
             <div class="text-[11px] text-slate-500 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
               <span>${escapeHtml(it.source)}</span>
               <span>${fmtTime(when)}</span>

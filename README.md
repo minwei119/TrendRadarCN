@@ -81,17 +81,137 @@ python run.py                           # 启动 web: http://127.0.0.1:8001
 |---|---|---|
 | `TRENDRADAR_PROXIES` | HTTP 代理（访问 Google News / arxiv / HuggingFace 用） | 否（国内直连源不需要） |
 | `TRENDRADAR_ZHIHU_COOKIE` | 知乎登录 cookie（绕过反爬） | 否（不配 zhihu 源会 401） |
-| `TRENDRADAR_LLM_API_KEY` | DeepSeek key，用于 ai-cn / ai-frontier 自动打标签 | 否（不配会降级到规则匹配） |
+| `TRENDRADAR_LLM_API_KEY` | DeepSeek key，用于 ai-cn / ai-frontier / robotics 自动打标签 + 一句话摘要 + 邮件去重 | 否（不配会降级到规则匹配，且不生成摘要） |
 | `SEC_USER_AGENT` | SEC EDGAR 联系人，格式 `Project name@domain.com` | 用 my-portfolio 板时需要 |
+| `TRENDRADAR_DASHBOARD_URL` | 邮件页脚仪表盘链接，例如 `http://192.168.1.100:8001`（手机能点） | 否（不配会自动探测 LAN IP） |
+| `TRENDRADAR_HOST` / `TRENDRADAR_PORT` | FastAPI 监听地址 / 端口（默认 `0.0.0.0:8001`，LAN 内可访问） | 否 |
+
+### 从手机/平板访问仪表盘（同 WiFi）
+
+默认 `python run.py` 监听 `0.0.0.0:8001`，意味着同一 WiFi 下的任何设备
+都能访问。三步搞定：
+
+```powershell
+# 1. 查本机 LAN IP（输出形如 192.168.1.100 或 10.x.x.x）
+powershell -ExecutionPolicy Bypass -File scripts\show_lan_ip.ps1
+# 或者直接:  ipconfig | findstr IPv4
+
+# 2. 放行 8001 端口（管理员 PowerShell，一次性）
+New-NetFirewallRule -DisplayName 'TrendRadarCN 8001' -Direction Inbound `
+    -Protocol TCP -LocalPort 8001 -Action Allow -Profile Private
+
+# 3. 把 IP 写到 .env，邮件页脚链接就自动用它
+#   TRENDRADAR_DASHBOARD_URL="http://192.168.1.100:8001"
+```
+
+手机连同一 WiFi 后，浏览器打开 `http://<LAN-IP>:8001` 即可访问。
+
+**注意**：
+
+- 公司 WiFi 经常打开 client isolation（同网段设备互不可见），可能访问不通。
+  这种情况下只能用 [Tailscale](https://tailscale.com) 之类 VPN（PC + 手机各装一次，免费）。
+- 家里 WiFi 的 LAN IP 一般是 `192.168.x.x`；公司网络则常见 `10.x.x.x`。
+  在不同网络间切换时 IP 会变，需要重新查并改 `.env`。
+
+### 公网访问（推荐）：GitHub Pages 静态快照
+
+LAN 方案只在同一 WiFi 下生效。如果你想从公司、4G、出差任意网络打开仪表盘
+（包括在 126/Gmail 网页邮箱里点邮件链接），推荐用 GitHub Pages 托管每日快照。
+
+**一次性配置**：
+
+1. 生成第一份快照并推到 GitHub:
+
+   ```powershell
+   python run.py --snapshot-publish
+   ```
+
+2. 打开 GitHub 仓库 → **Settings → Pages**:
+   - Source: `Deploy from a branch`
+   - Branch: `main` · Folder: `/docs`
+   - Save
+3. 等 1-2 分钟, GitHub 会给你 `https://minwei119.github.io/TrendRadarCN/`
+4. 把上一步的 URL 写到 `.env`:
+
+   ```dotenv
+   TRENDRADAR_PUBLIC_URL="https://minwei119.github.io/TrendRadarCN/"
+   ```
+
+之后每天 7:30 计划任务会自动跑 `--snapshot-publish`, 把当日数据 push 到 GitHub,
+GitHub Pages 自动重新发布。邮件页脚的“仪表盘”链接会自动指向这个公网 URL。
+
+**只生成不推送**（本地预览）：
+
+```powershell
+python run.py --snapshot
+start docs\index.html      # 用默认浏览器打开看看
+```
+
+**隐私提示**: 数据会公开在 GitHub Pages 上（新闻本身已经公开, 但你的“关注列表”
+即 tag 配置会暴露给任何看到 URL 的人）。如不接受, 改用方案 A (LAN) 或 Tailscale。
 
 ### 命令行模式（不启动 web）
 
+#### 抓取数据
+
 ```powershell
-python run.py --crawl                   # 抓所有"热点榜"源
-python run.py --board all               # 跑所有 4 个主题板
-python run.py --board my-portfolio      # 只跑某一个主题板
-python run.py --backfill-boards --force # 重新打标签 / 重新聚类所有已存在文章
-python run.py --test-llm                # 测 LLM API 通不通
+python run.py --crawl                       # 抓所有"热点榜"源
+python run.py --board all                   # 跑所有 5 个主题板
+python run.py --board my-portfolio          # 只跑某一个主题板
+python run.py --board all --email           # 跑完主题板顺便发邮件（定时任务用法）
+python run.py --board all --email --snapshot-publish  # 全套：抓 + 发 + push Pages
+```
+
+#### 邮件
+
+```powershell
+python run.py --digest-preview              # 不发, 只看 LLM 去重统计 + 前 3 条样例
+python run.py --digest-send                 # 用现有数据立即发一封 (不重新抓, ~10 秒)
+python run.py --test-email                  # 发一封最小测试邮件 (验 SMTP 是否通)
+```
+
+#### GitHub Pages 静态快照
+
+```powershell
+python run.py --snapshot                    # 只生成 docs/index.html, 不 push
+python run.py --snapshot-publish            # 生成 + git add/commit/push origin HEAD
+start docs\index.html                       # 浏览器打开本地预览
+```
+
+#### 主题板维护（改 tag / 切 LLM / 修数据时用）
+
+```powershell
+python run.py --backfill-boards             # 给历史文章补 tag (只补 NULL 行)
+python run.py --backfill-boards --force     # 重新打标签 / 重新聚类所有已存在文章
+python run.py --reset-tags ai-cn            # 清空某板的 tag 列, 准备从头打标
+python run.py --reset-tags all              # 清空所有板的 tag
+
+python run.py --backfill-summaries          # 给没摘要的文章生成 LLM 一句话摘要
+python run.py --backfill-summaries --force  # 重新生成所有文章的摘要
+python run.py --reset-summaries robotics    # 清空某板的 llm_summary
+
+python run.py --apply-llm-cluster my-portfolio          # 跑 LLM 语义聚类, 持久化到 llm_cluster_id (邮件 + 仪表盘共享)
+python run.py --apply-llm-cluster my-portfolio --force  # 先清空旧分组再跑 (改了 prompt 后用)
+python run.py --apply-llm-cluster all                   # 所有板块都重跑
+```
+
+#### 调试
+
+```powershell
+python run.py --test-llm                    # 发 3 条样例给 LLM, 看通不通 (用于排查 key/网络/模型名)
+
+# 按关键词查 DB 里相关文章, 看 llm_cluster_id 分组情况
+# (排查"邮件里同一新闻为啥还有 2 条"这类问题)
+python scripts\diag_keyword.py 腾讯 回购
+python scripts\diag_keyword.py 周靖人 --hours 48
+```
+
+#### 启动 web 仪表盘
+
+```powershell
+python run.py                               # 默认 0.0.0.0:8001, LAN 内任意设备可访问
+python run.py --host 127.0.0.1              # 锁回本机 only
+python run.py --port 9000                   # 换端口
 ```
 
 ## 代理与重试（环境变量配置，无需改代码）

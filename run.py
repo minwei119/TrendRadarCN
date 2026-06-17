@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Load .env FIRST, before importing any app module that reads os.environ
@@ -29,10 +30,181 @@ except ImportError:
     pass  # python-dotenv not installed; user can still set env vars manually
 
 
+def _run_snapshot(*, publish: bool) -> int:
+    """Build ``docs/index.html`` and, when ``publish=True``, also commit + push.
+
+    Returns 0 on success, non-zero on failure. We treat this as a side-channel
+    step that should never bubble up an exception into the parent ``--board``
+    run — any failure prints ``[snapshot] ERROR ...`` and returns non-zero so
+    the caller can decide what to do (the daily scheduled task already logs
+    process exit codes, so a non-zero here surfaces in ``logs/scheduled.log``).
+    """
+    from app.snapshot import build_snapshot
+
+    try:
+        result = build_snapshot()
+    except Exception as exc:  # noqa: BLE001 - never crash the parent run
+        print(
+            f"[snapshot] ERROR build failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return 1
+
+    print(
+        f"[snapshot] wrote {result['path']} "
+        f"({result['bytes'] / 1024:.1f} KB, "
+        f"{result['total']} articles across {len(result['boards'])} boards)",
+        flush=True,
+    )
+    for key, n in result["boards"].items():
+        print(f"[snapshot]   {key:14s} {n:>3} articles", flush=True)
+
+    if not publish:
+        return 0
+
+    return _git_publish_docs(Path(result["path"]).parent)
+
+
+def _git_publish_docs(docs_dir: Path) -> int:
+    """``git add docs/ && git commit -m ... && git push origin HEAD``.
+
+    All git invocations run with UTF-8 output decoding so Chinese commit
+    messages / file paths don't blow up on Windows code pages. Each step
+    prints a ``[snapshot]`` prefixed status line so the daily log is readable.
+
+    Idempotent: if ``git status --porcelain docs/`` is empty, we print
+    "nothing to publish" and return 0.
+    """
+    import subprocess
+
+    def _run(
+        argv: list[str], *, cwd: Path | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        # encoding="utf-8" + errors="replace" guarantees we never crash on
+        # decoding (Windows default cp936 mangles utf-8 commit messages).
+        return subprocess.run(
+            argv,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=check,
+        )
+
+    try:
+        top = _run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=docs_dir.parent
+        ).stdout.strip()
+        if not top:
+            print("[snapshot] ERROR git rev-parse returned empty path", flush=True)
+            return 1
+        repo_root = Path(top)
+    except FileNotFoundError:
+        print(
+            "[snapshot] ERROR git not found on PATH — install Git or skip --snapshot-publish",
+            flush=True,
+        )
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[snapshot] ERROR not inside a git repo: {e.stderr.strip() or e.stdout.strip()}",
+            flush=True,
+        )
+        return 1
+
+    docs_rel = docs_dir.resolve().relative_to(repo_root)
+
+    try:
+        status = _run(
+            ["git", "status", "--porcelain", "--", str(docs_rel)],
+            cwd=repo_root,
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[snapshot] ERROR git status failed: {e.stderr.strip() or e.stdout.strip()}",
+            flush=True,
+        )
+        return 1
+
+    if not status.strip():
+        print(
+            "[snapshot] nothing to publish (docs/ unchanged since last commit)",
+            flush=True,
+        )
+        return 0
+
+    iso_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+    commit_msg = f"snapshot {iso_date}"
+
+    try:
+        _run(["git", "add", "--", str(docs_rel)], cwd=repo_root)
+        print(f"[snapshot] git add {docs_rel}", flush=True)
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[snapshot] ERROR git add failed: {e.stderr.strip() or e.stdout.strip()}",
+            flush=True,
+        )
+        return 1
+
+    try:
+        commit_res = _run(
+            ["git", "commit", "-m", commit_msg], cwd=repo_root, check=False
+        )
+    except subprocess.CalledProcessError as e:
+        # Shouldn't happen with check=False, but be safe.
+        print(
+            f"[snapshot] ERROR git commit raised: {e.stderr.strip() or e.stdout.strip()}",
+            flush=True,
+        )
+        return 1
+    if commit_res.returncode != 0:
+        # Common cause: nothing actually staged because the changes were
+        # already-tracked-but-identical. Treat as success.
+        out = (commit_res.stdout + commit_res.stderr).lower()
+        if "nothing to commit" in out or "nothing added" in out:
+            print(
+                "[snapshot] git commit: nothing to commit (no diff after add)",
+                flush=True,
+            )
+            return 0
+        print(
+            f"[snapshot] ERROR git commit failed:\n{commit_res.stdout}{commit_res.stderr}",
+            flush=True,
+        )
+        return 1
+    print(f"[snapshot] git commit -m '{commit_msg}'", flush=True)
+
+    try:
+        push_res = _run(
+            ["git", "push", "origin", "HEAD"], cwd=repo_root, check=False
+        )
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[snapshot] ERROR git push raised: {e.stderr.strip() or e.stdout.strip()}",
+            flush=True,
+        )
+        return 1
+    if push_res.returncode != 0:
+        print(
+            f"[snapshot] ERROR git push failed:\n{push_res.stdout}{push_res.stderr}",
+            flush=True,
+        )
+        return 1
+    print("[snapshot] git push origin HEAD — DONE", flush=True)
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="TrendRadarCN launcher")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8001)
+    parser.add_argument(
+        "--host",
+        default=os.getenv("TRENDRADAR_HOST", "0.0.0.0"),
+        help="Bind address. 0.0.0.0 = listen on all interfaces so other "
+        "devices on your LAN (phone/tablet) can reach the dashboard. Use "
+        "127.0.0.1 to lock down to localhost only.",
+    )
+    parser.add_argument("--port", type=int, default=int(os.getenv("TRENDRADAR_PORT", "8001")))
     parser.add_argument(
         "--crawl",
         action="store_true",
@@ -66,6 +238,29 @@ def main() -> None:
         "tagger: rule -> llm, or after a big tag schema change.",
     )
     parser.add_argument(
+        "--backfill-summaries",
+        action="store_true",
+        help="Summarize all articles that don't yet have an LLM summary "
+        "(in boards with summarizer: llm). Combine with --force to "
+        "re-summarize everything.",
+    )
+    parser.add_argument(
+        "--reset-summaries",
+        metavar="KEY",
+        help="Clear llm_summary for the given board key (or 'all'). Use "
+        "before --backfill-summaries to re-generate every summary from scratch.",
+    )
+    parser.add_argument(
+        "--apply-llm-cluster",
+        metavar="KEY",
+        help="Run LLM semantic clustering on existing data for board KEY "
+        "(or 'all') and persist the result to articles.llm_cluster_id. "
+        "After this, both the email digest and the dashboard read the same "
+        "merged groups. Useful after changing the LLM prompt to re-cluster "
+        "historical articles. Combine with --force to NULL out previous "
+        "llm_cluster_id values first.",
+    )
+    parser.add_argument(
         "--test-llm",
         action="store_true",
         help="Send 3 hard-coded sample articles to the configured LLM "
@@ -87,7 +282,130 @@ def main() -> None:
         "Exits non-zero if SMTP is misconfigured or send fails (so users "
         "can debug independently of any board run).",
     )
+    parser.add_argument(
+        "--digest-preview",
+        action="store_true",
+        help="Build the email digest (hours=72) and print subject, per-board "
+        "counts, and the first 3 plain-text items per board. Does NOT send "
+        "mail — useful to verify LLM event clustering without spending an "
+        "SMTP send.",
+    )
+    parser.add_argument(
+        "--digest-send",
+        action="store_true",
+        help="Build the email digest (hours=72) from EXISTING data and send "
+        "it via SMTP. Does NOT re-crawl. Useful for testing email rendering "
+        "or the GitHub Pages link without waiting 5 min for a full crawl.",
+    )
+    parser.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Generate docs/index.html (a static, self-contained dashboard "
+        "snapshot) and exit. Suitable for serving via GitHub Pages so the "
+        "dashboard works from any network (incl. inside a 126/Gmail webmail "
+        "click). Does NOT push to git — use --snapshot-publish for that.",
+    )
+    parser.add_argument(
+        "--snapshot-publish",
+        action="store_true",
+        help="Like --snapshot, then `git add docs/ && git commit && git push "
+        "origin HEAD`. Combine with --board to wire into the daily scheduled "
+        "task. Idempotent: when docs/ is unchanged, prints 'nothing to "
+        "publish' and exits 0.",
+    )
     args = parser.parse_args()
+
+    if args.digest_preview:
+        from app.digest import build_digest
+
+        print("[digest-preview] building 72h digest...", flush=True)
+        digest = build_digest(hours=72)
+        print(f"\nSubject: {digest['subject']}", flush=True)
+        print(f"Total rendered groups: {digest['total_articles']}", flush=True)
+        print("\nPer-board counts:", flush=True)
+        for key, count in digest["board_counts"].items():
+            stats = digest.get("llm_cluster_stats", {}).get(key) or {}
+            if stats.get("used_llm"):
+                cost = stats.get("cost_usd", 0.0) or 0.0
+                in_tok = stats.get("prompt_tokens", 0)
+                out_tok = stats.get("completion_tokens", 0)
+                line = (
+                    f"  {key:14s} {count:>3} groups  "
+                    f"(llm-cluster: input={stats.get('n_input', 0)} "
+                    f"groups={stats.get('n_groups', 0)} "
+                    f"in={in_tok} out={out_tok} usd={cost:.5f})"
+                )
+            elif stats.get("persisted"):
+                line = (
+                    f"  {key:14s} {count:>3} groups  "
+                    f"(persisted llm_cluster_id: input={stats.get('n_input', 0)})"
+                )
+            else:
+                err = stats.get("error")
+                tail = f"  (no LLM cluster: {err})" if err else "  (no LLM cluster)"
+                line = f"  {key:14s} {count:>3} groups{tail}"
+            print(line, flush=True)
+        # Print the first 3 plain-text rows of each board section.
+        print("\n--- Sample (first 3 items per board) ---\n", flush=True)
+        text_body = digest["text"]
+        # Split on the "## " section headers and replay the first 3 rows.
+        sections = text_body.split("\n\n## ")
+        for i, section in enumerate(sections[1:], start=1):
+            header_line, _, body = section.partition("\n")
+            print(f"## {header_line}", flush=True)
+            # Items are 3 lines each (title / summary / url) joined by "\n  • "
+            # — simplest robust way is to split on the bullet marker.
+            items = body.split("\n  • ")
+            for item in items[:3]:
+                item = item.strip("\n")
+                if not item:
+                    continue
+                if not item.startswith("•") and not item.startswith("  •"):
+                    item = "  • " + item
+                print(item, flush=True)
+            print("", flush=True)
+        return
+
+    if args.digest_send:
+        from app.digest import build_digest
+        from app.mailer import is_configured, send_mail
+
+        if not is_configured():
+            print(
+                "ERROR: SMTP not configured. Required env vars: "
+                "SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_TO",
+                flush=True,
+            )
+            sys.exit(1)
+        print("[digest-send] building 72h digest from existing data...", flush=True)
+        digest = build_digest(hours=72)
+        print(
+            f"[digest-send] subject: {digest['subject']}  "
+            f"groups: {digest['total_articles']}",
+            flush=True,
+        )
+        for key, count in digest["board_counts"].items():
+            stats = digest.get("llm_cluster_stats", {}).get(key) or {}
+            if stats.get("used_llm"):
+                print(
+                    f"[digest-send] {key:14s} {count:>3} groups  "
+                    f"(llm-cluster: {stats.get('n_input', 0)}→"
+                    f"{stats.get('n_groups', 0)} usd={stats.get('cost_usd', 0):.5f})",
+                    flush=True,
+                )
+            else:
+                print(f"[digest-send] {key:14s} {count:>3} groups", flush=True)
+        try:
+            send_mail(
+                subject=digest["subject"],
+                html=digest["html"],
+                text=digest["text"],
+            )
+            print(f"[digest-send] OK: sent to {os.getenv('SMTP_TO')}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[digest-send] ERROR: {type(e).__name__}: {e}", flush=True)
+            sys.exit(1)
+        return
 
     if args.test_email:
         from app.mailer import is_configured, send_mail
@@ -186,6 +504,119 @@ def main() -> None:
         print(
             f"\n完成。共清空 {total} 篇文章的标签。"
             f"现在跑 `python run.py --backfill-boards` 重新打标签。",
+            flush=True,
+        )
+        return
+
+    if args.reset_summaries:
+        from app.boards import load_boards
+        from app.boards.service import reset_board_summaries
+        from app.db import init_db
+
+        init_db()
+        targets = (
+            [b.key for b in load_boards()]
+            if args.reset_summaries == "all"
+            else [args.reset_summaries]
+        )
+        total = 0
+        for key in targets:
+            n = reset_board_summaries(key)
+            total += n
+            print(f"  reset[{key}]: cleared llm_summary on {n} rows", flush=True)
+        print(
+            f"\n完成。共清空 {total} 篇文章的 LLM 摘要。"
+            f"现在跑 `python run.py --backfill-summaries` 重新生成摘要。",
+            flush=True,
+        )
+        return
+
+    if args.apply_llm_cluster:
+        from app.boards import load_boards
+        from app.boards.service import (
+            apply_llm_clustering,
+            reset_board_llm_clusters,
+        )
+        from app.db import init_db
+
+        init_db()
+        targets = (
+            [b.key for b in load_boards()]
+            if args.apply_llm_cluster == "all"
+            else [args.apply_llm_cluster]
+        )
+        if args.force:
+            print("--force: 先清空所有目标板块的 llm_cluster_id…", flush=True)
+            for key in targets:
+                n = reset_board_llm_clusters(key)
+                print(
+                    f"  reset[{key}]: cleared llm_cluster_id on {n} rows",
+                    flush=True,
+                )
+            print("", flush=True)
+
+        async def _apply_all() -> dict[str, dict[str, object]]:
+            out: dict[str, dict[str, object]] = {}
+            for key in targets:
+                out[key] = await apply_llm_clustering(key, hours=72, verbose=True)
+            return out
+
+        results = asyncio.run(_apply_all())
+        total_updated = 0
+        total_cost = 0.0
+        for key, stats in results.items():
+            cost = float(stats.get("cost_usd", 0.0) or 0.0)
+            total_cost += cost
+            total_updated += int(stats.get("n_updated", 0) or 0)
+            err = stats.get("error")
+            print(
+                f"  [llm-cluster] {key:14s} input={stats.get('n_input', 0)} "
+                f"groups={stats.get('n_groups', 0)} "
+                f"updated={stats.get('n_updated', 0)} "
+                f"cost=${cost:.5f}"
+                + (f"  err={err}" if err else ""),
+                flush=True,
+            )
+        print(
+            f"\n完成。共更新 {total_updated} 篇文章的 llm_cluster_id, "
+            f"LLM 成本 ${total_cost:.5f}。",
+            flush=True,
+        )
+        return
+
+    if args.backfill_summaries:
+        from app.boards import load_boards
+        from app.boards.service import (
+            backfill_summaries,
+            reset_board_summaries,
+        )
+        from app.db import init_db
+
+        init_db()
+        if args.force:
+            print("--force: 先清空所有板块的现有 LLM 摘要…", flush=True)
+            total_reset = 0
+            for b in load_boards():
+                if b.summarizer != "llm":
+                    continue
+                n = reset_board_summaries(b.key)
+                print(
+                    f"  reset[{b.key}]: cleared {n} rows",
+                    flush=True,
+                )
+                total_reset += n
+            print(f"  共清空 {total_reset} 行\n", flush=True)
+        print("正在为没有 LLM 摘要的文章生成摘要…", flush=True)
+        summary = asyncio.run(backfill_summaries(force=args.force, verbose=True))
+        total_sum = sum(s["summarized"] for s in summary.values())
+        total_cost = sum(
+            (s.get("stats") or {}).get("cost_usd", 0.0) for s in summary.values()
+        )
+        cost_line = (
+            f"  LLM 成本: ${total_cost:.5f}\n" if total_cost > 0 else ""
+        )
+        print(
+            f"\n完成。共生成 {total_sum} 篇 LLM 摘要。\n{cost_line}",
             flush=True,
         )
         return
@@ -309,6 +740,19 @@ def main() -> None:
                 )
                 try:
                     digest = build_digest(hours=24)
+                    for bkey, stats in (digest.get("llm_cluster_stats") or {}).items():
+                        if not stats.get("used_llm"):
+                            continue
+                        cost = stats.get("cost_usd", 0.0) or 0.0
+                        print(
+                            f"[email] llm-cluster[{bkey}]: "
+                            f"input={stats.get('n_input', 0)} "
+                            f"groups={stats.get('n_groups', 0)} "
+                            f"in={stats.get('prompt_tokens', 0)} "
+                            f"out={stats.get('completion_tokens', 0)} "
+                            f"usd={cost:.5f}",
+                            flush=True,
+                        )
                     send_mail(digest["subject"], digest["html"], digest["text"])
                     print(
                         f"[email] sent: {digest['total_articles']} articles "
@@ -320,6 +764,25 @@ def main() -> None:
                         f"[email] WARN: send failed - {type(e).__name__}: {e}",
                         flush=True,
                     )
+
+        # Snapshot AFTER email: a publish failure (e.g. transient git push
+        # error) shouldn't prevent the email from going out, and a successful
+        # snapshot is a no-op when the DB didn't change. Order: board → email
+        # → snapshot, matching the deliverable spec.
+        if args.snapshot or args.snapshot_publish:
+            _run_snapshot(publish=args.snapshot_publish)
+        return
+
+    # Standalone snapshot path: --snapshot / --snapshot-publish without --board.
+    # Useful for "just regenerate the static page from current DB state" runs,
+    # and for the very first manual publish to seed docs/ on the main branch.
+    if args.snapshot or args.snapshot_publish:
+        from app.db import init_db
+
+        init_db()
+        rc = _run_snapshot(publish=args.snapshot_publish)
+        if rc != 0:
+            sys.exit(rc)
         return
 
     import uvicorn

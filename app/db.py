@@ -30,6 +30,8 @@ def _ensure_columns() -> None:
         "articles": [
             ("tags", "TEXT"),
             ("cluster_id", "INTEGER"),
+            ("llm_summary", "TEXT"),
+            ("llm_cluster_id", "INTEGER"),
         ],
     }
     with ENGINE.begin() as conn:

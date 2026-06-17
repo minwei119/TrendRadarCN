@@ -21,11 +21,15 @@
     Run only one specific board
 
 .NOTES
-    Always passes --email to run.py. The flag is a no-op (silent skip) when
-    SMTP_HOST/USER/PASS/TO aren't all set in .env, so leaving the SMTP vars
-    blank disables the daily email without breaking the scheduled task.
+    Always passes --email AND --snapshot-publish to run.py.
+      * --email           silent-skips when SMTP isn't configured in .env.
+      * --snapshot-publish regenerates docs/index.html and pushes to origin
+        (so GitHub Pages republishes). Skips the git push when docs/ didn't
+        change. A push failure won't fail the parent script — it just shows
+        up as a non-zero log line in scheduled.log.
     Configure SMTP in .env (see .env.example) and run
     ``python run.py --test-email`` to verify before relying on the daily send.
+    GitHub Pages: see README.md "公网访问（推荐）：GitHub Pages 静态快照".
 #>
 param(
     [string]$Board = "all"
@@ -57,7 +61,7 @@ Add-Content -Path $LogFile -Value "=============================================
 Add-Content -Path $LogFile -Value "=== [$Start] starting board run (--board $Board) ==="
 Add-Content -Path $LogFile -Value "=========================================================="
 
-& $VenvPython run.py --board $Board --email 2>&1 | Tee-Object -FilePath $LogFile -Append
+& $VenvPython run.py --board $Board --email --snapshot-publish 2>&1 | Tee-Object -FilePath $LogFile -Append
 $ExitCode = $LASTEXITCODE
 
 $End = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'

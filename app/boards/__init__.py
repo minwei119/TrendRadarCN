@@ -99,6 +99,10 @@ class Board:
     # Tagger backend: "rule" (default, cheap, deterministic) or "llm"
     # (calls a chat completion API; needs TRENDRADAR_LLM_API_KEY env var).
     tagger: str = "rule"
+    # Summarizer backend: "none" (default) or "llm" (calls chat completion API
+    # per article; needs TRENDRADAR_LLM_API_KEY). Articles get llm_summary
+    # populated; existing summary is left untouched.
+    summarizer: str = "none"
 
 
 def _parse_feed(raw: dict[str, Any]) -> FeedConfig:
@@ -138,6 +142,7 @@ def _parse_board(raw: dict[str, Any]) -> Board:
         tags=parsed_tags,
         cluster_threshold=float(raw.get("cluster_threshold", 0.6)),
         tagger=str(raw.get("tagger", "rule")).lower(),
+        summarizer=str(raw.get("summarizer", "none")).lower(),
     )
 
 

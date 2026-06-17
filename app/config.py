@@ -63,6 +63,29 @@ def env_proxy() -> str | None:
     )
 
 
+def llm_proxy() -> str | None:
+    """Proxy to use for LLM API calls (DeepSeek / OpenAI / etc.).
+
+    Priority:
+      1. TRENDRADAR_LLM_PROXY — explicit override for LLM only.
+      2. First entry of TRENDRADAR_PROXIES (the crawler proxy list).
+      3. HTTPS_PROXY / HTTP_PROXY env vars (system-wide).
+      4. None (direct connection).
+
+    The LLM modules (cluster / tagger / summarizer) call this and pass the
+    result to ``httpx.AsyncClient(proxy=...)``. Returning ``None`` means go
+    direct — works on home networks where DeepSeek is reachable without
+    going through anything.
+    """
+    explicit = (os.getenv("TRENDRADAR_LLM_PROXY") or "").strip()
+    if explicit:
+        return explicit
+    pool = configured_proxies()
+    if pool:
+        return pool[0]
+    return env_proxy()
+
+
 def use_direct() -> bool:
     return _truthy(os.getenv("TRENDRADAR_USE_DIRECT"), default=True)
 
